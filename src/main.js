@@ -70,8 +70,8 @@ const upgradeDefinitions = [
     description: "+120 ammo",
     sprite: "ammo",
     maxLevel: 8,
-    baseCost: 300,
-    costScale: 1.7,
+    baseCost: 1500,
+    costScale: 2,
     effect: `+${ammoUpgradeBonus} starting ammo`,
   },
   {
@@ -81,7 +81,7 @@ const upgradeDefinitions = [
     description: "+15 HP",
     sprite: "health",
     maxLevel: 6,
-    baseCost: 450,
+    baseCost: 800,
     costScale: 1.85,
     effect: `+${healthUpgradeBonus} max health`,
   },
@@ -92,8 +92,8 @@ const upgradeDefinitions = [
     description: "Faster",
     sprite: "fire-rate",
     maxLevel: 5,
-    baseCost: 900,
-    costScale: 2.1,
+    baseCost: 3400,
+    costScale: 2.3,
     effect: `-${fireRateUpgradePercent}% weapon cooldown`,
   },
   {
@@ -103,8 +103,8 @@ const upgradeDefinitions = [
     description: "Run speed",
     sprite: "speed",
     maxLevel: 4,
-    baseCost: 700,
-    costScale: 2,
+    baseCost: 2300,
+    costScale: 2.15,
     effect: `+${speedUpgradePercent}% run speed`,
   },
 ];
@@ -266,14 +266,28 @@ const atlasTexture = new THREE.TextureLoader().load("./assets/sprite-atlas.png")
 atlasTexture.colorSpace = THREE.SRGBColorSpace;
 const bossCombatTexture = new THREE.TextureLoader().load("./assets/enemy-boss-combat-sheet.png");
 bossCombatTexture.colorSpace = THREE.SRGBColorSpace;
+bossCombatTexture.wrapS = THREE.ClampToEdgeWrapping;
+bossCombatTexture.wrapT = THREE.ClampToEdgeWrapping;
 const runnerTexture = new THREE.TextureLoader().load("./assets/player-runner-sheet.png");
 runnerTexture.colorSpace = THREE.SRGBColorSpace;
 const powerTexture = new THREE.TextureLoader().load("./assets/player-power-tiers.png");
 powerTexture.colorSpace = THREE.SRGBColorSpace;
+const weaponPickupTexture = new THREE.TextureLoader().load("./assets/weapon-pickup-sprites.svg");
+weaponPickupTexture.colorSpace = THREE.SRGBColorSpace;
 
 const atlasSize = { width: 1536, height: 1024 };
 const bossCombatSize = { width: 1536, height: 1024 };
-const bossCombatCell = { width: bossCombatSize.width / 8, height: bossCombatSize.height / 6 };
+const bossCombatGrid = { columns: 8, rows: 5 };
+const bossCombatCell = { width: bossCombatSize.width / bossCombatGrid.columns };
+const weaponPickupSheetSize = { width: 960, height: 192 };
+const weaponPickupCell = { width: weaponPickupSheetSize.width / 5, height: weaponPickupSheetSize.height };
+const weaponPickupRegions = {
+  carbine: { x: 0, y: 0, w: weaponPickupCell.width, h: weaponPickupCell.height },
+  rifle: { x: weaponPickupCell.width, y: 0, w: weaponPickupCell.width, h: weaponPickupCell.height },
+  cannon: { x: weaponPickupCell.width * 2, y: 0, w: weaponPickupCell.width, h: weaponPickupCell.height },
+  laser: { x: weaponPickupCell.width * 3, y: 0, w: weaponPickupCell.width, h: weaponPickupCell.height },
+  overdrive: { x: weaponPickupCell.width * 4, y: 0, w: weaponPickupCell.width, h: weaponPickupCell.height },
+};
 const atlasRegions = {
   hero: { x: 32, y: 130, w: 260, h: 420 },
   grunt: { x: 305, y: 172, w: 275, h: 378 },
@@ -332,13 +346,18 @@ function makeBossCombatMaterial(bossType, visualState = "idle") {
     death: 3,
   };
   const frame = frameByState[visualState] ?? 0;
+  const x = (bossType.combatCol + frame) * bossCombatCell.width;
+  const y = Math.round((bossType.combatRow * bossCombatSize.height) / bossCombatGrid.rows);
+  const nextY = Math.round(((bossType.combatRow + 1) * bossCombatSize.height) / bossCombatGrid.rows);
   const region = {
-    x: (bossType.combatCol + frame) * bossCombatCell.width,
-    y: bossType.combatRow * bossCombatCell.height,
+    x,
+    y,
     w: bossCombatCell.width,
-    h: bossCombatCell.height,
+    h: nextY - y,
   };
   const texture = bossCombatTexture.clone();
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.repeat.set(region.w / bossCombatSize.width, region.h / bossCombatSize.height);
   texture.offset.set(region.x / bossCombatSize.width, 1 - (region.y + region.h) / bossCombatSize.height);
   texture.needsUpdate = true;
@@ -348,6 +367,27 @@ function makeBossCombatMaterial(bossType, visualState = "idle") {
     depthWrite: false,
     alphaTest: 0.05,
   });
+}
+
+function makeWeaponPickupMaterial(weapon) {
+  const region = weaponPickupRegions[weapon.id] ?? weaponPickupRegions.carbine;
+  const texture = weaponPickupTexture.clone();
+  texture.repeat.set(region.w / weaponPickupSheetSize.width, region.h / weaponPickupSheetSize.height);
+  texture.offset.set(region.x / weaponPickupSheetSize.width, 1 - (region.y + region.h) / weaponPickupSheetSize.height);
+  texture.needsUpdate = true;
+  return new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    alphaTest: 0.05,
+  });
+}
+
+function makeWeaponPickupSprite(weapon, scale = 1) {
+  const sprite = new THREE.Sprite(makeWeaponPickupMaterial(weapon));
+  sprite.scale.set(2.4 * scale, 2.4 * scale, 1);
+  sprite.renderOrder = 5;
+  return sprite;
 }
 
 function makeAtlasSprite(regionName, width, height) {
@@ -407,72 +447,6 @@ function makeShadow(width = 0.9, depth = 0.45) {
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = 0.035;
   return shadow;
-}
-
-function makeWeaponMaterial(color, emissiveIntensity = 0.35) {
-  return new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity, metalness: 0.18, roughness: 0.32 });
-}
-
-function makeWeaponPart(geometry, material, position, rotation = [0, 0, 0]) {
-  const part = new THREE.Mesh(geometry, material);
-  part.position.set(...position);
-  part.rotation.set(...rotation);
-  part.castShadow = true;
-  return part;
-}
-
-function makeWeaponModel(weapon, scale = 1) {
-  const model = new THREE.Group();
-  const accent = makeWeaponMaterial(weapon.color, 0.62);
-  const hot = makeWeaponMaterial(weapon.color, 1.1);
-  const dark = new THREE.MeshStandardMaterial({ color: 0x121922, metalness: 0.28, roughness: 0.34 });
-  const trim = new THREE.MeshStandardMaterial({ color: 0xf7fbff, emissive: 0x9cf7ff, emissiveIntensity: 0.28, roughness: 0.22 });
-
-  if (weapon.id === "rifle") {
-    model.add(
-      makeWeaponPart(new THREE.BoxGeometry(1.38, 0.26, 0.34), accent, [0, 0.02, 0]),
-      makeWeaponPart(new THREE.BoxGeometry(0.92, 0.08, 0.42), trim, [0.08, 0.23, 0]),
-      makeWeaponPart(new THREE.BoxGeometry(0.32, 0.16, 0.2), dark, [-0.28, 0.39, 0]),
-      makeWeaponPart(new THREE.BoxGeometry(0.16, 0.16, 1.02), hot, [0.58, 0.02, -0.58]),
-      makeWeaponPart(new THREE.BoxGeometry(0.22, 0.34, 0.22), dark, [-0.42, -0.26, 0.08], [0.28, 0, 0]),
-    );
-  } else if (weapon.id === "cannon") {
-    model.add(
-      makeWeaponPart(new THREE.BoxGeometry(1.05, 0.46, 0.52), accent, [-0.08, 0.04, 0]),
-      makeWeaponPart(new THREE.CylinderGeometry(0.24, 0.3, 1.1, 18), hot, [0.52, 0.04, -0.5], [Math.PI / 2, 0, 0]),
-      makeWeaponPart(new THREE.CylinderGeometry(0.34, 0.28, 0.24, 18), trim, [0.52, 0.04, -1.12], [Math.PI / 2, 0, 0]),
-      makeWeaponPart(new THREE.BoxGeometry(0.44, 0.2, 0.32), dark, [-0.58, -0.28, 0.1], [0.2, 0, -0.12]),
-    );
-  } else if (weapon.id === "laser") {
-    model.add(
-      makeWeaponPart(new THREE.BoxGeometry(1.2, 0.28, 0.34), dark, [-0.06, 0.02, 0]),
-      makeWeaponPart(new THREE.BoxGeometry(0.84, 0.1, 0.46), accent, [0.08, 0.2, 0]),
-      makeWeaponPart(new THREE.CylinderGeometry(0.11, 0.11, 1.16, 14), hot, [0.48, 0.02, -0.64], [Math.PI / 2, 0, 0]),
-      makeWeaponPart(new THREE.OctahedronGeometry(0.22), trim, [0.48, 0.02, -1.25]),
-      makeWeaponPart(new THREE.BoxGeometry(0.24, 0.32, 0.22), dark, [-0.46, -0.24, 0.08], [0.28, 0, 0]),
-    );
-  } else if (weapon.id === "overdrive") {
-    model.add(
-      makeWeaponPart(new THREE.BoxGeometry(1.18, 0.38, 0.5), dark, [-0.08, 0.02, 0]),
-      makeWeaponPart(new THREE.BoxGeometry(0.74, 0.22, 0.22), accent, [0.08, 0.22, -0.14]),
-      makeWeaponPart(new THREE.CylinderGeometry(0.12, 0.16, 1.15, 14), hot, [0.46, 0.11, -0.66], [Math.PI / 2, 0, 0]),
-      makeWeaponPart(new THREE.CylinderGeometry(0.12, 0.16, 1.15, 14), hot, [0.46, -0.11, -0.66], [Math.PI / 2, 0, 0]),
-      makeWeaponPart(new THREE.SphereGeometry(0.2, 18, 10), makeWeaponMaterial(0xff4bd8, 0.9), [-0.34, 0.02, 0.1]),
-      makeWeaponPart(new THREE.BoxGeometry(0.32, 0.34, 0.26), dark, [-0.54, -0.3, 0.12], [0.18, 0, -0.16]),
-    );
-  } else {
-    model.add(
-      makeWeaponPart(new THREE.BoxGeometry(0.92, 0.22, 0.28), accent, [-0.04, 0.02, 0]),
-      makeWeaponPart(new THREE.BoxGeometry(0.16, 0.16, 0.82), hot, [0.34, 0.02, -0.48]),
-      makeWeaponPart(new THREE.BoxGeometry(0.18, 0.18, 0.2), trim, [0.34, 0.02, -0.96]),
-      makeWeaponPart(new THREE.BoxGeometry(0.24, 0.3, 0.2), dark, [-0.36, -0.24, 0.06], [0.28, 0, 0]),
-    );
-  }
-
-  model.rotation.set(-0.08, -0.42, 0.04);
-  model.scale.setScalar(scale);
-  model.userData = { baseY: 0, spin: 0.9 + weapon.cost * 0.025 };
-  return model;
 }
 
 boss = createBoss();
@@ -685,7 +659,7 @@ function currentBossType() {
 }
 
 function roundUpgradeCost(value) {
-  const step = value < 1000 ? 10 : value < 10000 ? 50 : 100;
+  const step = value < 1000 ? 50 : value < 10000 ? 100 : 500;
   return Math.ceil(value / step) * step;
 }
 
@@ -956,14 +930,14 @@ function makeWeaponPickup(x, z, weaponIndex) {
   );
   aura.rotation.x = -Math.PI / 2;
   aura.position.y = 0.28;
-  const model = makeWeaponModel(weapon, 0.78);
-  model.position.y = 0.82;
-  model.userData.baseY = model.position.y;
+  const weaponSprite = makeWeaponPickupSprite(weapon, 0.78);
+  weaponSprite.position.y = 0.92;
+  weaponSprite.userData.baseY = weaponSprite.position.y;
   const label = makeTextSprite(weapon.name.replace("Pulse ", ""), 0.42);
   label.position.set(0, 1.52, 0);
-  pickup.add(base, aura, model, label);
+  pickup.add(base, aura, weaponSprite, label);
   pickup.position.set(x, 0, z);
-  pickup.userData = { hit: false, weaponIndex, model, aura };
+  pickup.userData = { hit: false, weaponIndex, weaponSprite, aura };
   levelGroup.add(pickup);
   weaponPickups.push(pickup);
 }
@@ -997,12 +971,12 @@ function makeRewardPickup({ id, x, z, type, amount = 0, weaponIndex = 1 }) {
     );
     aura.rotation.x = -Math.PI / 2;
     aura.position.y = 0.32;
-    const model = makeWeaponModel(weapon, 0.86);
-    model.position.y = 0.88;
-    model.userData.baseY = model.position.y;
-    pickup.userData.model = model;
+    const weaponSprite = makeWeaponPickupSprite(weapon, 0.88);
+    weaponSprite.position.y = 0.96;
+    weaponSprite.userData.baseY = weaponSprite.position.y;
+    pickup.userData.weaponSprite = weaponSprite;
     pickup.userData.aura = aura;
-    pickup.add(aura, model);
+    pickup.add(aura, weaponSprite);
   }
   const labelText = isHealth ? `+${amount} HP` : weapon.name.replace("Pulse ", "");
   const label = makeTextSprite(labelText, 0.42);
@@ -2083,8 +2057,8 @@ function updateWorld(dt) {
     if (!pickup.userData.hit) {
       pickup.rotation.y += dt * 0.92;
       pickup.position.y = Math.sin(performance.now() * 0.004 + pickup.position.z) * 0.08;
-      if (pickup.userData.model) {
-        pickup.userData.model.position.y = pickup.userData.model.userData.baseY + Math.sin(performance.now() * 0.006 + pickup.position.z) * 0.08;
+      if (pickup.userData.weaponSprite) {
+        pickup.userData.weaponSprite.position.y = pickup.userData.weaponSprite.userData.baseY + Math.sin(performance.now() * 0.006 + pickup.position.z) * 0.08;
       }
       if (pickup.userData.aura) {
         pickup.userData.aura.material.opacity = 0.34 + Math.sin(performance.now() * 0.008 + pickup.position.z) * 0.1;
@@ -2099,8 +2073,8 @@ function updateWorld(dt) {
     if (pickup.visible && !pickup.userData.hit) {
       pickup.rotation.y += dt * 1.2;
       pickup.position.y = Math.sin(performance.now() * 0.004 + pickup.position.z) * 0.09;
-      if (pickup.userData.model) {
-        pickup.userData.model.position.y = pickup.userData.model.userData.baseY + Math.sin(performance.now() * 0.007 + pickup.position.z) * 0.1;
+      if (pickup.userData.weaponSprite) {
+        pickup.userData.weaponSprite.position.y = pickup.userData.weaponSprite.userData.baseY + Math.sin(performance.now() * 0.007 + pickup.position.z) * 0.1;
       }
       if (pickup.userData.aura) {
         pickup.userData.aura.material.opacity = 0.48 + Math.sin(performance.now() * 0.009 + pickup.position.z) * 0.12;
