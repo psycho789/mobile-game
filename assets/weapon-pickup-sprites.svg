@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="192" viewBox="0 0 960 192">
+  <defs>
+    <filter id="paintShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="7" stdDeviation="4" flood-color="#030508" flood-opacity="0.55"/>
+    </filter>
+    <filter id="energyGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e7f2ff"/>
+      <stop offset="0.35" stop-color="#6f8191"/>
+      <stop offset="1" stop-color="#101922"/>
+    </linearGradient>
+    <linearGradient id="darkBody" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#394656"/>
+      <stop offset="0.45" stop-color="#151d27"/>
+      <stop offset="1" stop-color="#05080c"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(0 0)" filter="url(#paintShadow)">
+    <ellipse cx="96" cy="150" rx="58" ry="13" fill="#05080b" opacity="0.35"/>
+    <path d="M33 103l24-27h64l18 14h28v18h-30l-18 13H62z" fill="#080c12" stroke="#d9fbff" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M58 80h63l17 13H60z" fill="#44d8ff"/>
+    <path d="M122 90h42v13h-42z" fill="url(#steel)"/>
+    <path d="M69 119h23l-7 31H65z" fill="#101922" stroke="#68efff" stroke-width="3"/>
+    <path d="M41 100l19-21 8 20-17 17z" fill="#1d2937"/>
+    <circle cx="150" cy="97" r="9" fill="#9cf7ff" filter="url(#energyGlow)"/>
+    <path d="M65 86c19 6 44 6 66 2" fill="none" stroke="#f7fbff" stroke-width="4" opacity="0.7"/>
+  </g>
+
+  <g transform="translate(192 0)" filter="url(#paintShadow)">
+    <ellipse cx="96" cy="150" rx="66" ry="13" fill="#05080b" opacity="0.35"/>
+    <path d="M20 108l28-34h82l20 15h30v17h-36l-19 16H47z" fill="#060b10" stroke="#d9ffe7" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M50 77h79l16 14H54z" fill="#4dff91"/>
+    <path d="M132 91h47v13h-47z" fill="url(#steel)"/>
+    <path d="M73 122h25l-5 32H70z" fill="#121a22" stroke="#75ff9b" stroke-width="3"/>
+    <path d="M25 105l25-30 11 28-21 17z" fill="#162232"/>
+    <rect x="70" y="55" width="45" height="12" rx="6" fill="#101922" stroke="#d9ffe7" stroke-width="3"/>
+    <circle cx="91" cy="61" r="7" fill="#75ff9b" filter="url(#energyGlow)"/>
+    <path d="M55 86c28 8 60 8 91 1" fill="none" stroke="#f7fbff" stroke-width="4" opacity="0.72"/>
+  </g>
+
+  <g transform="translate(384 0)" filter="url(#paintShadow)">
+    <ellipse cx="96" cy="151" rx="70" ry="14" fill="#05080b" opacity="0.36"/>
+    <path d="M24 112l28-39h75l20 17h26v21h-34l-22 18H51z" fill="#070b10" stroke="#fff0a7" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M53 78h73l18 16H56z" fill="#ffd45a"/>
+    <path d="M124 83h44v36h-44z" fill="url(#steel)" stroke="#fff0a7" stroke-width="4"/>
+    <path d="M155 76h25v50h-25z" fill="#f08c24" stroke="#fff0a7" stroke-width="4"/>
+    <path d="M67 129h28l-8 29H63z" fill="#151d27" stroke="#ffd45a" stroke-width="3"/>
+    <path d="M47 123h61" stroke="#f7fbff" stroke-width="5" opacity="0.5"/>
+    <circle cx="168" cy="101" r="12" fill="#fff4a8" filter="url(#energyGlow)"/>
+  </g>
+
+  <g transform="translate(576 0)" filter="url(#paintShadow)">
+    <ellipse cx="96" cy="150" rx="64" ry="13" fill="#05080b" opacity="0.35"/>
+    <path d="M25 108l26-35h73l21 16h27v18h-35l-18 16H49z" fill="#070c12" stroke="#c9fbff" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M54 77h69l18 15H58z" fill="#43dfff"/>
+    <path d="M113 91h57v13h-57z" fill="#eafcff"/>
+    <path d="M65 123h25l-7 31H61z" fill="#101922" stroke="#9cf7ff" stroke-width="3"/>
+    <path d="M45 104l-20-28 42 6z" fill="#1b2a3a" stroke="#73e8ff" stroke-width="3"/>
+    <path d="M90 67l-15-30 42 28z" fill="#1b2a3a" stroke="#73e8ff" stroke-width="3"/>
+    <circle cx="157" cy="97" r="13" fill="#f7fbff" filter="url(#energyGlow)"/>
+    <path d="M161 96h23" stroke="#9cf7ff" stroke-width="7" stroke-linecap="round" filter="url(#energyGlow)"/>
+  </g>
+
+  <g transform="translate(768 0)" filter="url(#paintShadow)">
+    <ellipse cx="96" cy="151" rx="72" ry="14" fill="#05080b" opacity="0.36"/>
+    <path d="M18 113l28-39h84l18 16h31v20h-38l-22 20H47z" fill="#070b10" stroke="#fff6aa" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M51 79h77l16 15H55z" fill="#fff06a"/>
+    <path d="M118 89h54v12h-54z" fill="#fff6aa"/>
+    <path d="M120 111h54v12h-54z" fill="#ff4bd8"/>
+    <circle cx="81" cy="103" r="21" fill="#ff4bd8" filter="url(#energyGlow)"/>
+    <circle cx="81" cy="103" r="10" fill="#fff6aa"/>
+    <path d="M61 128h30l-9 30H57z" fill="#121922" stroke="#fff06a" stroke-width="3"/>
+    <path d="M29 109l20-35 11 31-22 20z" fill="#1c2330"/>
+    <path d="M170 91l15-8M170 116l15 8" stroke="#fff06a" stroke-width="7" stroke-linecap="round" filter="url(#energyGlow)"/>
+  </g>
+</svg>

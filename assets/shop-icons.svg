@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="64" viewBox="0 0 640 64">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#263242"/>
+      <stop offset="1" stop-color="#0c1118"/>
+    </linearGradient>
+    <linearGradient id="coinGold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff4a8"/>
+      <stop offset="0.48" stop-color="#ffd45a"/>
+      <stop offset="1" stop-color="#f08c24"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g id="ammo" transform="translate(0 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <path d="M17 39h28c7 0 11-4 11-9s-4-9-11-9H17l9 9z" fill="#9cf7ff" filter="url(#glow)"/>
+    <path d="M17 39l9-9-9-9-8 9z" fill="#f7fbff"/>
+    <path d="M30 23h13c5 0 8 3 8 7s-3 7-8 7H30z" fill="#21a8ff"/>
+  </g>
+
+  <g id="health" transform="translate(64 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <rect x="14" y="16" width="36" height="34" rx="8" fill="#f7fbff"/>
+    <rect x="28" y="22" width="8" height="22" rx="2" fill="#ff4a6a"/>
+    <rect x="21" y="29" width="22" height="8" rx="2" fill="#ff4a6a"/>
+    <path d="M20 15h24l-5-6H25z" fill="#38d878"/>
+  </g>
+
+  <g id="fireRate" transform="translate(128 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <path d="M13 41h23l14-10-14-10H13z" fill="#151b22"/>
+    <rect x="18" y="26" width="24" height="10" rx="3" fill="#73e8ff"/>
+    <path d="M45 23l12 8-12 8 4-8z" fill="#ffd45a" filter="url(#glow)"/>
+    <path d="M22 41l6 10h10l-4-10z" fill="#151b22"/>
+  </g>
+
+  <g id="speed" transform="translate(192 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <path d="M16 42h25c7 0 13-5 13-11H40c-1 4-5 6-10 6H16z" fill="#38d878" filter="url(#glow)"/>
+    <path d="M18 28h19l8 9H24z" fill="#f7fbff"/>
+    <path d="M8 21h18M6 31h14M10 48h18" stroke="#73e8ff" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <g id="carbine" transform="translate(256 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <rect x="12" y="27" width="31" height="10" rx="3" fill="#9cf7ff"/>
+    <rect x="39" y="30" width="14" height="4" rx="2" fill="#f7fbff"/>
+    <path d="M18 37h10l-4 10h-8z" fill="#151b22"/>
+  </g>
+
+  <g id="rifle" transform="translate(320 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <rect x="10" y="26" width="34" height="11" rx="3" fill="#75ff9b"/>
+    <rect x="42" y="29" width="15" height="4" rx="2" fill="#f7fbff"/>
+    <rect x="21" y="20" width="12" height="5" rx="2" fill="#151b22"/>
+    <path d="M17 37h11l-4 10h-9z" fill="#151b22"/>
+  </g>
+
+  <g id="cannon" transform="translate(384 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <rect x="11" y="24" width="31" height="16" rx="5" fill="#ffd45a"/>
+    <rect x="38" y="27" width="17" height="10" rx="4" fill="#f08c24"/>
+    <path d="M17 40h14l-5 10H15z" fill="#151b22"/>
+  </g>
+
+  <g id="laser" transform="translate(448 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <rect x="12" y="27" width="31" height="10" rx="3" fill="#9cf7ff"/>
+    <path d="M42 32h15" stroke="#f7fbff" stroke-width="5" stroke-linecap="round" filter="url(#glow)"/>
+    <circle cx="24" cy="32" r="5" fill="#21a8ff"/>
+    <path d="M18 37h11l-4 10h-9z" fill="#151b22"/>
+  </g>
+
+  <g id="overdrive" transform="translate(512 0)">
+    <rect width="64" height="64" rx="12" fill="url(#tile)"/>
+    <path d="M12 35l17-18 8 13 15-6-12 24-8-13z" fill="#fff06a" filter="url(#glow)"/>
+    <path d="M14 38h25l11-6-11-6H14z" fill="#151b22" opacity="0.72"/>
+    <circle cx="32" cy="32" r="7" fill="#ff4bd8"/>
+  </g>
+
+  <g id="coin" transform="translate(576 0)">
+    <rect width="64" height="64" rx="12" fill="none"/>
+    <circle cx="32" cy="32" r="22" fill="url(#coinGold)" stroke="#fff4a8" stroke-width="4"/>
+    <path d="M32 17v30M23 25c0-5 18-5 18 1 0 8-18 3-18 11 0 6 18 6 18 0" fill="none" stroke="#8a4c12" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
