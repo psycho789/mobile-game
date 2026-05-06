@@ -5,6 +5,7 @@ const audioState = {
   ambient: null,
   enabled: true,
   unlocked: false,
+  graphReady: false,
   lastPlayed: new Map(),
   loops: new Map(),
 };
@@ -59,7 +60,7 @@ function noise({ duration = 0.18, gain = 0.18, frequency = 900, destination = au
 }
 
 function canPlay(name, cooldown = 0.03) {
-  if (!audioState.ctx || !audioState.enabled) return false;
+  if (!audioState.ctx || !audioState.enabled || !audioState.unlocked) return false;
   const t = now();
   const last = audioState.lastPlayed.get(name) ?? -999;
   if (t - last < cooldown) return false;
@@ -67,11 +68,13 @@ function canPlay(name, cooldown = 0.03) {
   return true;
 }
 
-export function initAudio() {
-  if (audioState.unlocked) return;
+function ensureAudioGraph() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) return;
+  if (!AudioContextClass) return false;
   audioState.ctx = audioState.ctx ?? new AudioContextClass();
+
+  if (audioState.graphReady) return true;
+
   audioState.master = audioState.master ?? audioState.ctx.createGain();
   audioState.sfx = audioState.sfx ?? audioState.ctx.createGain();
   audioState.ambient = audioState.ambient ?? audioState.ctx.createGain();
@@ -81,8 +84,25 @@ export function initAudio() {
   audioState.sfx.connect(audioState.master);
   audioState.ambient.connect(audioState.master);
   audioState.master.connect(audioState.ctx.destination);
-  audioState.ctx.resume();
-  audioState.unlocked = true;
+  audioState.ctx.addEventListener?.("statechange", () => {
+    audioState.unlocked = audioState.ctx?.state === "running";
+  });
+  audioState.graphReady = true;
+  return true;
+}
+
+export async function initAudio() {
+  if (!ensureAudioGraph()) return false;
+  if (audioState.ctx.state !== "running") {
+    try {
+      await audioState.ctx.resume();
+    } catch {
+      audioState.unlocked = false;
+      return false;
+    }
+  }
+  audioState.unlocked = audioState.ctx.state === "running";
+  return audioState.unlocked;
 }
 
 export function setAudioEnabled(enabled) {
@@ -95,7 +115,6 @@ export function isAudioEnabled() {
 }
 
 export function playSound(name, options = {}) {
-  if (!audioState.unlocked) return;
   const pitch = options.pitch ?? 1;
   const intensity = options.intensity ?? 1;
   if (!canPlay(name, options.cooldown ?? 0.035)) return;

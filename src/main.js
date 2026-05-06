@@ -1200,8 +1200,8 @@ function showToast(text) {
   state.toastTimer = 0.85;
 }
 
-function startRun() {
-  initAudio();
+async function startRun() {
+  await initAudio();
   playSound("start", { cooldown: 0.2 });
   startLoop("run");
   stopLoop("boss");
@@ -1218,7 +1218,7 @@ function finishRun(won) {
   playSound(won ? "victory" : "defeat", { cooldown: 0.4 });
   result.classList.remove("hidden");
   resultTitle.textContent = won ? "Victory" : state.failReason || "Out of Ammo";
-  const reward = won ? Math.max(60, Math.floor(state.ammo * 0.35 + state.level * 38)) : Math.max(12, state.coins * 0.02 + state.level * 8);
+  const reward = won ? Math.max(90, Math.floor(state.ammo * 0.45 + state.level * 48)) : Math.max(12, state.coins * 0.02 + state.level * 8);
   addCoins(Math.floor(reward));
   resultCopy.textContent = won
     ? `The boss dropped ${Math.floor(reward)} coins. Stronger enemies are moving in.`
@@ -1255,6 +1255,18 @@ function collectCoin(coin) {
   coin.visible = false;
   playSound("coin", { cooldown: 0.035 });
   addCoins(1);
+}
+
+function showCoinReward(amount, position) {
+  if (amount <= 0) return;
+  const popup = makeTextSprite(`+${amount}`, 0.42);
+  popup.material.color.setHex(0xffd45a);
+  popup.material.opacity = 0.96;
+  popup.renderOrder = 8;
+  popup.position.set(position.x, position.y + 1.45, position.z);
+  popup.userData = { effect: true, ttl: 0.64, ttlMax: 0.64, floatY: 1.15 };
+  projectileGroup.add(popup);
+  projectiles.push(popup);
 }
 
 function collectWeaponPickup(pickup) {
@@ -1694,6 +1706,7 @@ function damageEnemy(enemy, amount) {
     projectiles.push(boom);
     enemy.visible = false;
     addCoins(enemy.userData.reward);
+    showCoinReward(enemy.userData.reward, enemy.position);
   }
 }
 
@@ -1756,8 +1769,10 @@ function updateProjectiles(dt) {
     const projectile = projectiles[i];
     if (projectile.userData.effect) {
       projectile.userData.ttl -= dt;
+      if (projectile.userData.floatY) projectile.position.y += projectile.userData.floatY * dt;
       projectile.scale.multiplyScalar(1 + dt * (projectile.userData.ring ? 6.5 : 2.2));
-      projectile.material.opacity = Math.max(0, projectile.userData.ttl / (projectile.userData.ring ? 0.42 : 0.34));
+      const ttlMax = projectile.userData.ttlMax ?? (projectile.userData.ring ? 0.42 : 0.34);
+      projectile.material.opacity = Math.min(1, Math.max(0, projectile.userData.ttl / ttlMax));
       if (projectile.userData.ttl <= 0) {
         projectileGroup.remove(projectile);
         projectiles.splice(i, 1);
@@ -2135,6 +2150,7 @@ let pointerStartX = 0;
 let startTargetX = 0;
 
 function onPointerDown(event) {
+  void initAudio();
   pointerActive = true;
   pointerStartX = event.clientX;
   startTargetX = state.targetX;
@@ -2151,30 +2167,31 @@ function onPointerUp() {
 }
 
 function onKey(event) {
+  void initAudio();
   if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") state.targetX -= 0.8;
   if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") state.targetX += 0.8;
   state.targetX = THREE.MathUtils.clamp(state.targetX, -laneWidth / 2 + 0.55, laneWidth / 2 - 0.55);
 }
 
-shopGrid?.addEventListener("click", (event) => {
+shopGrid?.addEventListener("click", async (event) => {
   event.stopPropagation();
   const button = event.target.closest("[data-upgrade-id]");
   if (!button) return;
-  initAudio();
+  await initAudio();
   purchaseUpgrade(button.dataset.upgradeId);
 });
 
 startButton.addEventListener("click", startRun);
-restartButton.addEventListener("click", () => {
-  initAudio();
+restartButton.addEventListener("click", async () => {
+  await initAudio();
   playSound("start", { cooldown: 0.2 });
   startLoop("run");
   stopLoop("boss");
   resetRun(restartButton.dataset.next === "true");
   state.phase = "running";
 });
-audioToggle.addEventListener("click", () => {
-  initAudio();
+audioToggle.addEventListener("click", async () => {
+  await initAudio();
   const enabled = !isAudioEnabled();
   setAudioEnabled(enabled);
   audioToggle.textContent = enabled ? "Sound On" : "Sound Off";
@@ -2185,6 +2202,7 @@ window.addEventListener("resize", resize);
 window.addEventListener("pointerdown", onPointerDown);
 window.addEventListener("pointermove", onPointerMove);
 window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("touchstart", () => void initAudio(), { passive: true });
 window.addEventListener("keydown", onKey);
 
 let last = performance.now();

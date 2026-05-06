@@ -74,6 +74,30 @@
       </section>
     </main>
 
+    <script>
+      (() => {
+        if (!("serviceWorker" in navigator)) return;
+
+        let shouldReloadOnControllerChange = Boolean(navigator.serviceWorker.controller);
+        let refreshing = false;
+
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (!shouldReloadOnControllerChange) {
+            shouldReloadOnControllerChange = true;
+            return;
+          }
+          if (refreshing) return;
+          refreshing = true;
+          window.location.reload();
+        });
+
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("./sw.js").catch((error) => {
+            console.warn("Service worker registration failed", error);
+          });
+        });
+      })();
+    </script>
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>
