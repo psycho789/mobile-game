@@ -2,10 +2,10 @@ export const LANE_X = [-2.35, 0, 2.35];
 
 export const WEAPONS = [
   { id: "carbine", name: "Carbine", cost: 1, damage: 4.2, cooldown: 0.085, color: 0x9cf7ff, projectile: "playerBullet" },
-  { id: "rifle", name: "Pulse Rifle", cost: 3, damage: 9.8, cooldown: 0.074, color: 0x75ff9b, projectile: "playerBullet" },
-  { id: "cannon", name: "Cannon", cost: 8, damage: 34, cooldown: 0.118, color: 0xffd45a, projectile: "enemyBullet" },
-  { id: "laser", name: "Laser", cost: 16, damage: 82, cooldown: 0.17, color: 0x9cf7ff, projectile: "flash" },
-  { id: "overdrive", name: "Overdrive", cost: 26, damage: 138, cooldown: 0.145, color: 0xfff06a, projectile: "flash" },
+  { id: "rifle", name: "Pulse Rifle", cost: 2, damage: 9.8, cooldown: 0.074, color: 0x75ff9b, projectile: "playerBullet" },
+  { id: "cannon", name: "Cannon", cost: 6, damage: 34, cooldown: 0.118, color: 0xffd45a, projectile: "enemyBullet" },
+  { id: "laser", name: "Laser", cost: 11, damage: 82, cooldown: 0.17, color: 0x9cf7ff, projectile: "flash" },
+  { id: "overdrive", name: "Overdrive", cost: 18, damage: 138, cooldown: 0.145, color: 0xfff06a, projectile: "flash" },
 ];
 
 export const ENEMY_TYPES = {
@@ -26,10 +26,10 @@ export const BOSS_TYPES = [
     tint: 0xffffff,
     attackTint: 0xffa34a,
     projectileColor: 0xff4bd8,
-    attackRate: 0.46,
-    enrageRate: 0.34,
-    burstCount: 3,
-    damage: 11,
+    attackRate: 0.58,
+    enrageRate: 0.43,
+    burstCount: 2,
+    damage: 8,
     projectileSpeed: 35,
     patterns: ["turret", "fan", "barrage"],
     shieldHp: 0,
@@ -44,13 +44,13 @@ export const BOSS_TYPES = [
     tint: 0x8fe8ff,
     attackTint: 0x65e8ff,
     projectileColor: 0x65e8ff,
-    attackRate: 0.38,
-    enrageRate: 0.29,
+    attackRate: 0.5,
+    enrageRate: 0.38,
     burstCount: 2,
-    damage: 9,
+    damage: 7,
     projectileSpeed: 42,
     patterns: ["sweep", "spread", "turret"],
-    shieldHp: 0.22,
+    shieldHp: 0.16,
     enrageAt: 0.45,
   },
   {
@@ -62,14 +62,14 @@ export const BOSS_TYPES = [
     tint: 0xffd45a,
     attackTint: 0xfff1a8,
     projectileColor: 0xffa33d,
-    attackRate: 0.55,
-    enrageRate: 0.38,
-    burstCount: 3,
-    damage: 12,
+    attackRate: 0.66,
+    enrageRate: 0.48,
+    burstCount: 2,
+    damage: 9,
     projectileSpeed: 33,
     patterns: ["wall", "fan", "shieldBurst"],
-    shieldHp: 0.48,
-    shieldRegen: 7,
+    shieldHp: 0.34,
+    shieldRegen: 4,
     enrageAt: 0.5,
   },
   {
@@ -81,13 +81,13 @@ export const BOSS_TYPES = [
     tint: 0xff86ff,
     attackTint: 0xb66cff,
     projectileColor: 0xb66cff,
-    attackRate: 0.34,
-    enrageRate: 0.24,
-    burstCount: 4,
-    damage: 8,
+    attackRate: 0.46,
+    enrageRate: 0.34,
+    burstCount: 3,
+    damage: 6,
     projectileSpeed: 46,
     patterns: ["barrage", "sweep", "fan"],
-    shieldHp: 0.14,
+    shieldHp: 0.1,
     enrageAt: 0.38,
   },
 ];
@@ -187,8 +187,8 @@ function pickWeighted(random, entries) {
 }
 
 function makeMathGatePair({ random, level, sectionIndex, hard, recentTemplates }) {
-  const base = 26 + hard * 5 + sectionIndex * 4;
-  const variance = Math.floor(random() * (18 + hard * 2));
+  const base = 44 + hard * 7 + sectionIndex * 6;
+  const variance = Math.floor(random() * (28 + hard * 3));
   const templates = [
     {
       id: "closeAdds",
@@ -261,7 +261,7 @@ export function generateLevel(level, { finishZ = -292 } = {}) {
   const bossType = BOSS_TYPES[(level - 1) % BOSS_TYPES.length];
   const hard = level - 1;
   const sections = Math.min(26, 18 + Math.floor(hard / 2));
-  const startAmmo = 220 + level * 42;
+  const startAmmo = 430 + level * 70;
   const startZ = -24;
   const spacing = (Math.abs(finishZ) - 72) / sections;
   const gatePairs = [];
@@ -316,7 +316,7 @@ export function generateLevel(level, { finishZ = -292 } = {}) {
       const rewardWeapon = vaultWeaponProgression[Math.min(vaultIndex, vaultWeaponProgression.length - 1)];
       vaultIndex += 1;
       for (let g = 0; g < gateCount; g += 1) {
-        const hp = Math.round(20 + hard * 5.6 + i * 2.9 + g * (7 + hard * 0.75));
+        const hp = Math.round(14 + hard * 4.4 + i * 2.1 + g * (5 + hard * 0.55));
         sectionsOut[sectionsOut.length - 1].decrementGates.push({
           x: rewardLane,
           z: z - spacing * (0.22 + g * 0.14),
@@ -354,6 +354,6 @@ export function generateLevel(level, { finishZ = -292 } = {}) {
   }
 
   const expectedAmmo = simulateBestPath(startAmmo, gatePairs);
-  const bossHp = Math.round((170 + level * 95) * bossType.hp);
+  const bossHp = Math.round((124 + level * 58) * bossType.hp);
   return { theme, bossType, sections: sectionsOut, weaponPickups, rewardPickups, coins, obstacles, expectedAmmo, startAmmo, bossHp };
 }

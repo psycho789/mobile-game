@@ -737,7 +737,7 @@ function makeEnemy(x, z, hp, type = "grunt") {
     lockState: false,
     lockPulse: 0,
     shootCooldown: 0.45 + Math.random() * 0.55,
-    shootEvery: Math.max(0.36, config.shootEvery * 0.72),
+    shootEvery: Math.max(0.48, config.shootEvery * 0.9),
     shotCost: config.shotCost,
     reward: config.reward,
     anim: new AnimationController({
@@ -1034,6 +1034,7 @@ function spawnEnemyProjectile(enemy, offsetX = 0, speedBonus = 0, damageBonus = 
     velocity: direction.multiplyScalar(speed),
     radius: enemy.userData.type === "heavy" ? 0.7 : 0.48,
     ttl: 2.4,
+    previousPosition: start.clone(),
     alive: true,
   };
   projectileGroup.add(projectile);
@@ -1084,6 +1085,7 @@ function spawnBossProjectile(pattern = "single", offsetX = 0, damage = 12, speed
     velocity: direction.multiplyScalar(speed),
     radius,
     ttl: 3,
+    previousPosition: start.clone(),
     alive: true,
   };
   projectileGroup.add(projectile);
@@ -1267,7 +1269,7 @@ function updateBossAttacks(dt) {
 
   state.bossWindupTimer = 0.18;
   state.shakeTimer = Math.max(state.shakeTimer, enraged ? 0.18 : 0.11);
-  state.bossAttackTimer = Math.max(0.2, (enraged ? bossType.enrageRate : bossType.attackRate) - Math.min(0.08, level * 0.006));
+  state.bossAttackTimer = Math.max(0.32, (enraged ? bossType.enrageRate : bossType.attackRate) - Math.min(0.06, level * 0.004));
 }
 
 function damageEnemy(enemy, amount) {
@@ -1365,11 +1367,17 @@ function updateProjectiles(dt) {
 
     if (projectile.userData.hostile) {
       projectile.userData.ttl -= dt;
+      projectile.userData.previousPosition?.copy(projectile.position);
       projectile.position.add(projectile.userData.velocity.clone().multiplyScalar(dt));
-      const dx = projectile.position.x - squadGroup.position.x;
-      const dz = projectile.position.z - squadGroup.position.z;
-      const closeY = Math.abs(projectile.position.y - 0.75) < 1.25;
-      if (Math.hypot(dx, dz) < projectile.userData.radius + 0.72 && closeY) {
+      const previous = projectile.userData.previousPosition ?? projectile.position;
+      const segment = reusableVectors.one.copy(projectile.position).sub(previous);
+      const squadPoint = reusableVectors.two.set(squadGroup.position.x, 0.75, squadGroup.position.z);
+      const toSquad = new THREE.Vector3().copy(squadPoint).sub(previous);
+      const segmentLengthSq = Math.max(0.0001, segment.lengthSq());
+      const t = THREE.MathUtils.clamp(toSquad.dot(segment) / segmentLengthSq, 0, 1);
+      const closest = previous.clone().add(segment.multiplyScalar(t));
+      const hitRadius = projectile.userData.radius + (projectile.userData.bossShot ? 1.05 : 0.78);
+      if (closest.distanceTo(squadPoint) < hitRadius) {
         damagePlayer(projectile.userData.damage);
         projectileGroup.remove(projectile);
         projectiles.splice(i, 1);
@@ -1513,7 +1521,10 @@ function updateBossFight(dt) {
   }
   camera.lookAt(0, 1.2, bossZ - 2);
   squadGroup.position.z = THREE.MathUtils.lerp(squadGroup.position.z, bossZ + 5.2, 0.04);
-  squadGroup.position.x = THREE.MathUtils.lerp(squadGroup.position.x, 0, 0.05);
+  state.playerX = THREE.MathUtils.lerp(state.playerX, state.targetX, 1 - Math.pow(0.001, dt));
+  state.playerX = THREE.MathUtils.clamp(state.playerX, -laneWidth / 2 + 0.55, laneWidth / 2 - 0.55);
+  squadGroup.position.x = state.playerX;
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, state.playerX * 0.22, 0.06);
   const bossType = currentBossType();
   const t = performance.now() * 0.001;
   boss.rotation.y += dt * (state.bossEnraged ? 1.25 : 0.75);
