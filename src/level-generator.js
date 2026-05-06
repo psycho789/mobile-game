@@ -304,39 +304,70 @@ function scaleVaultGateHp(baseHp, reward, { hard, gateIndex, sectionIndex, curre
   return Math.round(currentWeapon.damage * targetShots);
 }
 
-function practicalVaultDamageLimit(gates, weaponIndex) {
+function vaultShotCap(reward, weaponIndex) {
+  if (reward.type === "health") return weaponIndex <= 1 ? 2 : 1;
+  return weaponIndex <= 1 ? 3 : 2;
+}
+
+function vaultTimeBudget(gates) {
   if (!gates.length) return 0;
-  const weapon = WEAPONS[Math.max(0, Math.min(weaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
   const maxSpeed = PLAYER_BASE_SPEED * PLAYER_MAX_SPEED_MULTIPLIER;
   const span = Math.abs(gates[gates.length - 1].z - gates[0].z);
-  const availableTime = (DECREMENT_GATE_TARGET_RANGE + span + DECREMENT_GATE_TIME_BUFFER) / maxSpeed;
-  return Math.floor((weapon.damage / weapon.cooldown) * availableTime * VAULT_DAMAGE_SAFETY);
+  return Math.max(0, (DECREMENT_GATE_BALANCE_RANGE + DECREMENT_GATE_BALANCE_GRACE + span) / maxSpeed - VAULT_REACTION_ENEMY_RESERVE);
+}
+
+function analyzeVaultBreakability(gates, reward, weaponIndex, ammo = Infinity) {
+  const weapon = WEAPONS[Math.max(0, Math.min(weaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
+  const gateHps = gates.map((gate) => Math.max(1, Math.round(gate.hp)));
+  const shotsPerGate = gateHps.map((hp) => Math.ceil(hp / weapon.damage));
+  const totalShots = shotsPerGate.reduce((sum, shots) => sum + shots, 0);
+  const ammoCost = totalShots * weapon.cost;
+  const timeBudget = vaultTimeBudget(gates);
+  const timeNeeded = totalShots > 0
+    ? (totalShots - 1) * weapon.cooldown + VAULT_PROJECTILE_TRAVEL_RESERVE
+    : 0;
+  const maxShotsPerGate = vaultShotCap(reward, weaponIndex);
+  const nextWeaponIndex = reward.type === "weapon" ? Math.max(weaponIndex, reward.weaponIndex ?? weaponIndex) : weaponIndex;
+  const minimumAmmoAfterVault = WEAPONS[nextWeaponIndex]?.cost ?? weapon.cost;
+  const enoughAmmo = ammo - ammoCost >= minimumAmmoAfterVault;
+  return {
+    gateHps,
+    shotsPerGate,
+    totalShots,
+    ammoCost,
+    timeNeeded,
+    timeBudget,
+    maxShotsPerGate,
+    minimumAmmoAfterVault,
+    enoughAmmo,
+    breakable: shotsPerGate.every((shots) => shots <= maxShotsPerGate) && timeNeeded <= timeBudget,
+  };
 }
 
 function balanceVaultGateHp(gates, reward, currentWeaponIndex) {
   if (!gates.length) return;
-  const limit = practicalVaultDamageLimit(gates, currentWeaponIndex);
-  const currentTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
-  const targetRatio = reward.type === "health" ? HEALTH_VAULT_TARGET_RATIO : WEAPON_VAULT_TARGET_RATIO;
-  const targetLimit = Math.max(1, Math.floor(limit * targetRatio));
-  if (currentTotal <= targetLimit) return;
-
   const weapon = WEAPONS[Math.max(0, Math.min(currentWeaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
-  const targetTotal = targetLimit;
-  const weightTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
+  const maxShotsPerGate = vaultShotCap(reward, currentWeaponIndex);
+  const maxTotalShotsByGate = maxShotsPerGate * gates.length;
+  const timeBudget = vaultTimeBudget(gates);
+  const maxTotalShotsByTime = Math.max(1, Math.floor((Math.max(0, timeBudget - VAULT_PROJECTILE_TRAVEL_RESERVE) / weapon.cooldown) + 1));
+  let remainingShots = Math.max(1, Math.min(maxTotalShotsByGate, maxTotalShotsByTime));
+  const minShots = gates.length;
 
-  gates.forEach((gate) => {
-    const weightedHp = Math.max(1, Math.round((targetTotal * gate.hp) / weightTotal));
-    gate.hp = weightedHp;
+  if (remainingShots < minShots) remainingShots = minShots;
+
+  gates.forEach((gate, index) => {
+    const gatesLeft = gates.length - index;
+    const minReserve = gatesLeft - 1;
+    const desiredShots = Math.max(1, Math.min(maxShotsPerGate, Math.ceil(gate.hp / weapon.damage)));
+    const shots = Math.max(1, Math.min(desiredShots, remainingShots - minReserve));
+    gate.hp = Math.max(1, Math.floor(weapon.damage * shots));
+    remainingShots -= shots;
   });
 
-  let balancedTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
-  for (let i = gates.length - 1; balancedTotal > targetTotal && i >= 0; i = (i - 1 + gates.length) % gates.length) {
-    if (gateCanTrim(gates[i], weapon)) {
-      gates[i].hp -= 1;
-      balancedTotal -= 1;
-    }
-    if (!gates.some((gate) => gateCanTrim(gate, weapon))) break;
+  while (!analyzeVaultBreakability(gates, reward, currentWeaponIndex).breakable && gates.some((gate) => gateCanTrim(gate, weapon))) {
+    const gate = gates.reduce((largest, candidate) => candidate.hp > largest.hp ? candidate : largest, gates[0]);
+    gate.hp -= 1;
   }
 }
 
@@ -388,25 +419,35 @@ export function analyzeLevelSolvability(levelData) {
     const reward = levelData.rewardPickups.find((pickup) => pickup.id === section.decrementGates?.[0]?.rewardId);
     let vaultCost = 0;
     if (reward && section.decrementGates.length) {
-      const vaultHp = section.decrementGates.reduce((sum, gate) => sum + gate.hp, 0);
-      const practicalLimit = practicalVaultDamageLimit(section.decrementGates, weaponIndex);
+      const vault = analyzeVaultBreakability(section.decrementGates, reward, weaponIndex, ammo);
+      const vaultHp = vault.gateHps.reduce((sum, hp) => sum + hp, 0);
       vaultReports.push({
         section: section.type,
+        rewardId: reward.id,
         rewardType: reward.type,
         rewardWeaponIndex: reward.weaponIndex,
         weaponIndex,
+        ammoBefore: ammo,
+        gateHps: vault.gateHps,
         vaultHp,
-        practicalLimit,
-        breakable: vaultHp <= practicalLimit,
+        shotsPerGate: vault.shotsPerGate,
+        totalShots: vault.totalShots,
+        ammoCost: vault.ammoCost,
+        timeNeeded: vault.timeNeeded,
+        timeBudget: vault.timeBudget,
+        maxShotsPerGate: vault.maxShotsPerGate,
+        minimumAmmoAfterVault: vault.minimumAmmoAfterVault,
+        enoughAmmo: vault.enoughAmmo,
+        breakable: vault.breakable,
       });
-    }
-    if (reward?.type === "weapon" && reward.weaponIndex > weaponIndex) {
-      vaultCost = section.decrementGates.reduce((sum, gate) => sum + ammoCostForHp(gate.hp, weaponIndex), 0);
-      if (ammo - vaultCost > WEAPONS[reward.weaponIndex].cost) {
+      vaultCost = vault.ammoCost;
+      if (vault.breakable && vault.enoughAmmo) {
         ammo -= vaultCost;
         ammoSpent += vaultCost;
-        weaponIndex = Math.max(weaponIndex, reward.weaponIndex);
-        highestWeapon = Math.max(highestWeapon, weaponIndex);
+        if (reward.type === "weapon" && reward.weaponIndex > weaponIndex) {
+          weaponIndex = Math.max(weaponIndex, reward.weaponIndex);
+          highestWeapon = Math.max(highestWeapon, weaponIndex);
+        }
       }
     }
 
@@ -416,7 +457,7 @@ export function analyzeLevelSolvability(levelData) {
   const bossCost = ammoCostForBoss(levelData.bossType, levelData.bossHp, weaponIndex);
   const finalAmmo = ammo - bossCost;
   const minimumUsableAmmo = WEAPONS[weaponIndex]?.cost ?? 1;
-  const practicalVaultsSolvable = vaultReports.every((report) => report.breakable);
+  const practicalVaultsSolvable = vaultReports.every((report) => report.breakable && report.enoughAmmo);
   return {
     solvable: finalAmmo >= minimumUsableAmmo && practicalVaultsSolvable,
     finalAmmo,
@@ -557,10 +598,34 @@ function buildLevelCandidate(level, { finishZ, runSeed, attempt }) {
 }
 
 function softenLevel(levelData, analysis) {
-  const deficit = Math.max(0, analysis.minimumUsableAmmo - analysis.finalAmmo);
-  const cushion = Math.max(60, Math.ceil(levelData.bossHp * 0.08));
-  levelData.startAmmo += deficit + cushion;
-  levelData.expectedAmmo = simulateBestPath(levelData.startAmmo, levelData.sections.filter((section) => section.gates).map((section) => section.gates));
+  let currentAnalysis = analysis;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    currentAnalysis.vaultReports
+      .filter((report) => !report.breakable)
+      .forEach((report) => {
+        const section = levelData.sections.find((candidate) => candidate.decrementGates?.[0]?.rewardId === report.rewardId);
+        const reward = levelData.rewardPickups.find((pickup) => pickup.id === report.rewardId);
+        if (section && reward) balanceVaultGateHp(section.decrementGates, reward, report.weaponIndex);
+      });
+
+    const finalAmmoDeficit = Math.max(0, currentAnalysis.minimumUsableAmmo - currentAnalysis.finalAmmo);
+    const vaultAmmoDeficit = currentAnalysis.vaultReports.reduce((largest, report) => {
+      if (report.enoughAmmo) return largest;
+      return Math.max(largest, report.ammoCost + report.minimumAmmoAfterVault - report.ammoBefore);
+    }, 0);
+    const deficit = Math.max(finalAmmoDeficit, vaultAmmoDeficit);
+
+    if (deficit > 0) {
+      const cushion = Math.max(60, Math.ceil(levelData.bossHp * 0.08));
+      levelData.startAmmo += deficit + cushion;
+      levelData.expectedAmmo = simulateBestPath(levelData.startAmmo, levelData.sections.filter((section) => section.gates).map((section) => section.gates));
+    }
+
+    currentAnalysis = analyzeLevelSolvability(levelData);
+    if (currentAnalysis.solvable) break;
+  }
+
   return levelData;
 }
 

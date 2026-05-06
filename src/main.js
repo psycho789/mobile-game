@@ -59,8 +59,8 @@ const ammoUpgradeBonus = 120;
 const healthUpgradeBonus = 15;
 const fireRateUpgradePercent = 6;
 const speedUpgradePercent = 4;
-const decrementGateShootRange = 88;
-const decrementGateDespawnGrace = 4.8;
+const decrementGateShootRange = 104;
+const decrementGateDespawnGrace = 7.5;
 
 const upgradeDefinitions = [
   {
@@ -1475,8 +1475,9 @@ function findTarget() {
     .filter((enemy) => enemy.position.z < state.playerZ - 3 && enemy.position.z > state.playerZ - 88)
     .sort((a, b) => b.position.z - a.position.z);
 
-  const urgentEnemy = aheadEnemies.find((enemy) => enemy.position.z > state.playerZ - 18 && enemyIsShootable(enemy));
-  if (urgentEnemy) return urgentEnemy;
+  const shootableEnemies = aheadEnemies.filter(enemyIsShootable);
+  const criticalEnemy = shootableEnemies.find((enemy) => enemyDistanceAhead(enemy) <= 7);
+  if (criticalEnemy) return criticalEnemy;
 
   const laneGate = decrementGates
     .filter((gate) => gate.userData.active && gate.userData.hp > 0)
@@ -1485,7 +1486,6 @@ function findTarget() {
     .sort((a, b) => b.position.z - a.position.z)[0];
   if (laneGate) return laneGate;
 
-  const shootableEnemies = aheadEnemies.filter(enemyIsShootable);
   const laneEnemy = shootableEnemies.find((enemy) => Math.abs(enemy.position.x - state.playerX) < enemy.userData.width + 0.95);
   if (laneEnemy) return laneEnemy;
   if (shootableEnemies.length) return shootableEnemies[0];
