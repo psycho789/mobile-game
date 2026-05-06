@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Math Mob Rush</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.1/build/three.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main id="game-shell">
+      <canvas id="game"></canvas>
+
+      <section id="hud" aria-label="Game status">
+        <div class="hud-group">
+          <span class="label">Level</span>
+          <strong id="level">1</strong>
+        </div>
+        <div class="hud-group">
+          <span class="label">Ammo</span>
+          <strong id="ammo">60</strong>
+        </div>
+        <div class="hud-group">
+          <span class="label">Health</span>
+          <strong id="health">100</strong>
+        </div>
+        <div class="hud-group">
+          <span class="label">Weapon</span>
+          <strong id="weapon">Pistol</strong>
+        </div>
+        <div class="hud-group">
+          <span class="label">Coins</span>
+          <strong id="coins">0</strong>
+        </div>
+      </section>
+
+      <section id="boss-panel" aria-label="Boss health">
+        <span>Boss</span>
+        <div class="bar">
+          <div id="boss-fill"></div>
+        </div>
+      </section>
+
+      <section id="toast" aria-live="polite"></section>
+
+      <section id="menu" class="overlay">
+        <div class="panel">
+          <h1>Math Mob Rush</h1>
+          <button id="start">Start Run</button>
+        </div>
+      </section>
+
+      <section id="result" class="overlay hidden">
+        <div class="panel">
+          <h2 id="result-title">Victory</h2>
+          <p id="result-copy">Your squad won the fight.</p>
+          <button id="restart">Next Run</button>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

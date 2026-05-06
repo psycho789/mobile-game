@@ -1,0 +1,1518 @@
+import * as THREE from "three";
+import { AnimationController } from "./animation.js";
+import { ENEMY_TYPES, WEAPONS, generateLevel } from "./level-generator.js";
+
+const canvas = document.querySelector("#game");
+const levelEl = document.querySelector("#level");
+const ammoEl = document.querySelector("#ammo");
+const healthEl = document.querySelector("#health");
+const weaponEl = document.querySelector("#weapon");
+const coinsEl = document.querySelector("#coins");
+const toastEl = document.querySelector("#toast");
+const bossPanel = document.querySelector("#boss-panel");
+const bossFill = document.querySelector("#boss-fill");
+const menu = document.querySelector("#menu");
+const result = document.querySelector("#result");
+const resultTitle = document.querySelector("#result-title");
+const resultCopy = document.querySelector("#result-copy");
+const startButton = document.querySelector("#start");
+const restartButton = document.querySelector("#restart");
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fd3ff);
+scene.fog = new THREE.Fog(0x8fd3ff, 55, 210);
+
+const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 360);
+camera.position.set(0, 9, 13);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x536575, 2.2);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xffffff, 3.7);
+sun.position.set(-8, 16, 10);
+sun.castShadow = true;
+sun.shadow.camera.left = -22;
+sun.shadow.camera.right = 22;
+sun.shadow.camera.top = 26;
+sun.shadow.camera.bottom = -34;
+scene.add(sun);
+
+const laneWidth = 7.4;
+const trackLength = 860;
+const finishZ = -812;
+const bossZ = -834;
+const squadSize = 3;
+
+const state = {
+  phase: "menu",
+  level: 1,
+  coins: 0,
+  ammo: 60,
+  health: 100,
+  maxHealth: 100,
+  invulnerableTimer: 0,
+  speed: 12.8,
+  playerX: 0,
+  targetX: 0,
+  playerZ: 0,
+  distance: 0,
+  bossHp: 0,
+  maxBossHp: 0,
+  bossAttackTimer: 0,
+  bossWindupTimer: 0,
+  fireCooldown: 0,
+  weaponIndex: 0,
+  failReason: "",
+  toastTimer: 0,
+  hitFlashTimer: 0,
+  shakeTimer: 0,
+  currentLevelData: null,
+};
+
+const materials = {
+  track: new THREE.MeshStandardMaterial({ color: 0x34495e, roughness: 0.82 }),
+  lane: new THREE.MeshStandardMaterial({ color: 0x98f1ff, roughness: 0.55, transparent: true, opacity: 0.36 }),
+  rail: new THREE.MeshStandardMaterial({ color: 0x1d2a35, roughness: 0.66 }),
+  grass: new THREE.MeshStandardMaterial({ color: 0x61b96e, roughness: 0.92 }),
+  player: new THREE.MeshStandardMaterial({ color: 0x38d878, roughness: 0.45 }),
+  playerAlt: new THREE.MeshStandardMaterial({ color: 0x21a8ff, roughness: 0.45 }),
+  visor: new THREE.MeshStandardMaterial({ color: 0xf7fbff, roughness: 0.18 }),
+  weapon: new THREE.MeshStandardMaterial({ color: 0x151b22, metalness: 0.25, roughness: 0.35 }),
+  muzzle: new THREE.MeshStandardMaterial({ color: 0xffd45a, emissive: 0xffaa22, emissiveIntensity: 0.8 }),
+  enemy: new THREE.MeshStandardMaterial({ color: 0xf75d5d, roughness: 0.48 }),
+  enemyHeavy: new THREE.MeshStandardMaterial({ color: 0xc63fe8, roughness: 0.5 }),
+  enemyShield: new THREE.MeshStandardMaterial({ color: 0xff8f3d, roughness: 0.42 }),
+  boss: new THREE.MeshStandardMaterial({ color: 0x6c4ad7, roughness: 0.5 }),
+  enemyWeapon: new THREE.MeshStandardMaterial({ color: 0x241926, metalness: 0.2, roughness: 0.4 }),
+  enemyEye: new THREE.MeshStandardMaterial({ color: 0xfff2a6, emissive: 0xff7a2e, emissiveIntensity: 0.9 }),
+  gatePanel: new THREE.MeshStandardMaterial({
+    color: 0x2089ff,
+    roughness: 0.25,
+    transparent: true,
+    opacity: 0.7,
+  }),
+  decrementPanel: new THREE.MeshStandardMaterial({
+    color: 0x1b75ff,
+    emissive: 0x0b55dd,
+    emissiveIntensity: 0.42,
+    roughness: 0.22,
+    transparent: true,
+    opacity: 0.82,
+  }),
+  lockedReward: new THREE.MeshStandardMaterial({ color: 0x73e8ff, emissive: 0x126dff, emissiveIntensity: 0.36, roughness: 0.35 }),
+  obstacle: new THREE.MeshStandardMaterial({ color: 0xf7c85c, roughness: 0.5 }),
+  coin: new THREE.MeshStandardMaterial({ color: 0xffd45a, metalness: 0.15, roughness: 0.25 }),
+  projectile: new THREE.MeshStandardMaterial({ color: 0xf7fbff, emissive: 0x61d8ff, emissiveIntensity: 1.2 }),
+  enemyProjectile: new THREE.MeshStandardMaterial({ color: 0xff6a3d, emissive: 0xff2a12, emissiveIntensity: 1.2 }),
+};
+
+const world = new THREE.Group();
+const squadGroup = new THREE.Group();
+const levelGroup = new THREE.Group();
+const projectileGroup = new THREE.Group();
+const dressingGroup = new THREE.Group();
+scene.add(world, dressingGroup, squadGroup, levelGroup, projectileGroup);
+
+const track = new THREE.Mesh(new THREE.BoxGeometry(laneWidth + 1.2, 0.42, trackLength), materials.track);
+track.position.set(0, -0.25, -trackLength / 2 + 7);
+track.receiveShadow = true;
+world.add(track);
+
+const ground = new THREE.Mesh(new THREE.BoxGeometry(34, 0.22, trackLength + 28), materials.grass);
+ground.position.set(0, -0.5, -trackLength / 2 + 4);
+ground.receiveShadow = true;
+world.add(ground);
+track.renderOrder = 1;
+
+for (const x of [-laneWidth / 2 - 0.75, laneWidth / 2 + 0.75]) {
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.36, trackLength), materials.rail);
+  rail.position.set(x, 0.08, -trackLength / 2 + 7);
+  rail.receiveShadow = true;
+  world.add(rail);
+}
+
+for (let z = -10; z > finishZ; z -= 18) {
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.035, 7.5), materials.lane);
+  stripe.position.set(0, 0.02, z);
+  world.add(stripe);
+}
+
+for (let z = -14; z > finishZ - 20; z -= 22) {
+  for (const x of [-7.6, 7.6]) {
+    const pylon = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.38, 1.1, 8), materials.rail);
+    base.position.y = 0.42;
+    const top = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 8), materials.coin);
+    top.position.y = 1.08;
+    pylon.add(base, top);
+    pylon.position.set(x, 0, z);
+    world.add(pylon);
+  }
+}
+
+const finish = new THREE.Mesh(new THREE.BoxGeometry(laneWidth + 1.4, 0.12, 1.3), materials.coin);
+finish.position.set(0, 0.03, finishZ);
+world.add(finish);
+
+let boss;
+
+const squadMembers = [];
+let squadAmmoLabel;
+let squadHealthBar;
+let squadTierLabel;
+const collidables = [];
+const coins = [];
+const gates = [];
+const decrementGates = [];
+const enemies = [];
+const weaponPickups = [];
+const rewardPickups = [];
+const projectiles = [];
+const textCanvases = new Map();
+const reusableVectors = {
+  one: new THREE.Vector3(),
+  two: new THREE.Vector3(),
+};
+const atlasTexture = new THREE.TextureLoader().load("./assets/sprite-atlas.png");
+atlasTexture.colorSpace = THREE.SRGBColorSpace;
+const runnerTexture = new THREE.TextureLoader().load("./assets/player-runner-sheet.png");
+runnerTexture.colorSpace = THREE.SRGBColorSpace;
+const powerTexture = new THREE.TextureLoader().load("./assets/player-power-tiers.png");
+powerTexture.colorSpace = THREE.SRGBColorSpace;
+
+const atlasSize = { width: 1536, height: 1024 };
+const atlasRegions = {
+  hero: { x: 32, y: 130, w: 260, h: 420 },
+  grunt: { x: 305, y: 172, w: 275, h: 378 },
+  shield: { x: 588, y: 165, w: 285, h: 390 },
+  heavy: { x: 882, y: 160, w: 315, h: 405 },
+  boss: { x: 1190, y: 82, w: 335, h: 480 },
+  coin: { x: 70, y: 690, w: 170, h: 180 },
+  playerBullet: { x: 292, y: 704, w: 230, h: 115 },
+  enemyBullet: { x: 570, y: 704, w: 230, h: 115 },
+  flash: { x: 832, y: 640, w: 310, h: 235 },
+  explosion: { x: 1146, y: 615, w: 355, h: 315 },
+};
+const runnerSheetSize = { width: 1536, height: 1024 };
+const powerSheetSize = { width: 1408, height: 1136 };
+const powerCell = { width: powerSheetSize.width / 5, height: powerSheetSize.height / 4 };
+const runnerRegions = {};
+for (let tier = 0; tier < 5; tier += 1) {
+  ["run1", "run2", "shoot1", "shoot2"].forEach((name, row) => {
+    runnerRegions[`t${tier}_${name}`] = {
+      x: tier * powerCell.width + 18,
+      y: row * powerCell.height + 12,
+      w: powerCell.width - 36,
+      h: powerCell.height - 20,
+    };
+  });
+}
+
+const weapons = WEAPONS;
+
+function makeAtlasMaterial(regionName) {
+  const region = atlasRegions[regionName];
+  const texture = atlasTexture.clone();
+  texture.repeat.set(region.w / atlasSize.width, region.h / atlasSize.height);
+  texture.offset.set(region.x / atlasSize.width, 1 - (region.y + region.h) / atlasSize.height);
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    alphaTest: 0.05,
+  });
+  return material;
+}
+
+function makeAtlasSprite(regionName, width, height) {
+  const sprite = new THREE.Sprite(makeAtlasMaterial(regionName));
+  sprite.scale.set(width, height, 1);
+  return sprite;
+}
+
+function makeRunnerMaterial(regionName) {
+  const region = runnerRegions[regionName];
+  const texture = powerTexture.clone();
+  texture.repeat.set(region.w / powerSheetSize.width, region.h / powerSheetSize.height);
+  texture.offset.set(region.x / powerSheetSize.width, 1 - (region.y + region.h) / powerSheetSize.height);
+  texture.needsUpdate = true;
+  return new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    alphaTest: 0.05,
+  });
+}
+
+function setRunnerFrame(sprite, frame) {
+  const region = runnerRegions[frame];
+  const texture = sprite.material.map;
+  texture.repeat.set(region.w / powerSheetSize.width, region.h / powerSheetSize.height);
+  texture.offset.set(region.x / powerSheetSize.width, 1 - (region.y + region.h) / powerSheetSize.height);
+  texture.needsUpdate = true;
+  sprite.userData.frame = frame;
+}
+
+function makeShadow(width = 0.9, depth = 0.45) {
+  const shadow = new THREE.Mesh(
+    new THREE.CircleGeometry(0.5, 28),
+    new THREE.MeshBasicMaterial({ color: 0x05080b, transparent: true, opacity: 0.24, depthWrite: false }),
+  );
+  shadow.scale.set(width, depth, 1);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.035;
+  return shadow;
+}
+
+boss = createBoss();
+boss.position.set(0, 0, bossZ);
+world.add(boss);
+
+function applyTheme(theme) {
+  scene.background.setHex(theme.sky);
+  scene.fog.color.setHex(theme.fog);
+  materials.track.color.setHex(theme.track);
+  materials.grass.color.setHex(theme.ground);
+  materials.rail.color.setHex(theme.rail);
+  materials.lane.color.setHex(theme.lane);
+  materials.gatePanel.color.setHex(theme.gate);
+  hemi.groundColor.setHex(theme.ground);
+  while (dressingGroup.children.length) dressingGroup.remove(dressingGroup.children[0]);
+
+  for (let z = -20; z > finishZ - 18; z -= 18) {
+    for (const side of [-1, 1]) {
+      const mast = new THREE.Group();
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.14, 2.2, 8), materials.rail);
+      post.position.y = 0.95;
+      const glow = new THREE.Mesh(
+        new THREE.SphereGeometry(0.34, 16, 10),
+        new THREE.MeshBasicMaterial({ color: (Math.floor(Math.abs(z)) / 18) % 2 ? theme.propA : theme.propB, transparent: true, opacity: 0.9 }),
+      );
+      glow.position.y = 2.08;
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.08, 0.22), materials.lane);
+      fin.position.y = 1.55;
+      mast.add(post, glow, fin);
+      mast.position.set(side * (laneWidth / 2 + 2.2), 0, z);
+      dressingGroup.add(mast);
+    }
+  }
+}
+
+function createTextTexture(text, size = 112) {
+  const key = `${text}:${size}`;
+  if (!textCanvases.has(key)) {
+    const canvasText = document.createElement("canvas");
+    canvasText.width = 512;
+    canvasText.height = 256;
+    const ctx = canvasText.getContext("2d");
+    ctx.clearRect(0, 0, canvasText.width, canvasText.height);
+    ctx.font = `900 ${size}px Inter, Arial, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 16;
+    ctx.strokeStyle = "rgba(0,0,0,0.48)";
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeText(text, 256, 132);
+    ctx.fillText(text, 256, 132);
+    const texture = new THREE.CanvasTexture(canvasText);
+    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    textCanvases.set(key, texture);
+  }
+  return textCanvases.get(key);
+}
+
+function makeTextSprite(text, size = 1.25) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: createTextTexture(text), transparent: true }));
+  sprite.scale.set(size * 2.5, size * 1.25, 1);
+  return sprite;
+}
+
+function makeHpLabel(value, size = 0.8) {
+  const canvasText = document.createElement("canvas");
+  canvasText.width = 256;
+  canvasText.height = 128;
+  const texture = new THREE.CanvasTexture(canvasText);
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(size * 2, size, 1);
+  sprite.userData = { canvasText, texture, last: null };
+  updateHpLabel(sprite, value);
+  return sprite;
+}
+
+function makeHealthBar(width = 2.1) {
+  const group = new THREE.Group();
+  const bg = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, 0.18),
+    new THREE.MeshBasicMaterial({ color: 0x111821, transparent: true, opacity: 0.82, depthWrite: false }),
+  );
+  const fill = new THREE.Mesh(
+    new THREE.PlaneGeometry(width - 0.08, 0.1),
+    new THREE.MeshBasicMaterial({ color: 0x38d878, transparent: true, opacity: 0.95, depthWrite: false }),
+  );
+  fill.position.set(-(width - 0.08) / 2, 0, 0.01);
+  fill.geometry.translate((width - 0.08) / 2, 0, 0);
+  group.add(bg, fill);
+  group.userData = { fill, width: width - 0.08 };
+  return group;
+}
+
+function updateHealthBar(bar, health, maxHealth) {
+  const ratio = THREE.MathUtils.clamp(health / maxHealth, 0, 1);
+  bar.userData.fill.scale.x = ratio;
+  const color = ratio > 0.6 ? 0x38d878 : ratio > 0.3 ? 0xffd45a : 0xff4a4a;
+  bar.userData.fill.material.color.setHex(color);
+}
+
+function updateHpLabel(sprite, value) {
+  const next = `${Math.max(0, Math.ceil(value))}`;
+  if (sprite.userData.last === next) return;
+  sprite.userData.last = next;
+  const ctx = sprite.userData.canvasText.getContext("2d");
+  ctx.clearRect(0, 0, 256, 128);
+  ctx.fillStyle = "rgba(15, 19, 25, 0.78)";
+  roundRect(ctx, 28, 22, 200, 76, 22);
+  ctx.fill();
+  ctx.font = "900 58px Inter, Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = "rgba(0,0,0,0.35)";
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeText(next, 128, 62);
+  ctx.fillText(next, 128, 62);
+  sprite.userData.texture.needsUpdate = true;
+}
+
+function roundRect(ctx, x, y, width, height, radius) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + width, y, x + width, y + height, radius);
+  ctx.arcTo(x + width, y + height, x, y + height, radius);
+  ctx.arcTo(x, y + height, x, y, radius);
+  ctx.arcTo(x, y, x + width, y, radius);
+  ctx.closePath();
+}
+
+function createSquadMember(index) {
+  const member = new THREE.Group();
+  const shadow = makeShadow(0.85, 0.42);
+  const aura = new THREE.Mesh(
+    new THREE.RingGeometry(0.42, 0.55, 32),
+    new THREE.MeshBasicMaterial({ color: 0x9cf7ff, transparent: true, opacity: 0.32, depthWrite: false }),
+  );
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.045;
+  const isLead = index === 1;
+  const sprite = new THREE.Sprite(makeRunnerMaterial("t0_run1"));
+  sprite.scale.set(isLead ? 1.18 : 1.02, isLead ? 1.84 : 1.6, 1);
+  sprite.position.y = isLead ? 0.98 : 0.84;
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0.18, 0.86, -0.64);
+  const flash = makeAtlasSprite("flash", 0.55, 0.38);
+  flash.position.set(0.25, 0.9, -0.72);
+  flash.visible = false;
+  member.add(shadow, aura, sprite, muzzle, flash);
+  member.userData = {
+    muzzle,
+    flash,
+    flashTimer: 0,
+    sprite,
+    aura,
+    controller: new AnimationController({
+      frames: {
+        run: ["run1", "run2", "run1", "run2"],
+        shootRun: ["shoot1", "run2", "shoot2", "run1"],
+        upgrade: ["shoot1", "shoot2", "run1", "run2"],
+        hit: ["shoot1", "run1"],
+      },
+      frameDuration: 0.095,
+    }),
+    lastWeaponId: "carbine",
+  };
+  return member;
+}
+
+function createBoss() {
+  const group = new THREE.Group();
+  const shadow = makeShadow(2.5, 0.78);
+  const sprite = makeAtlasSprite("boss", 3.8, 4.95);
+  sprite.position.y = 2.38;
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0.56, 1.6, -0.95);
+  const label = makeHpLabel(0, 1.05);
+  label.position.set(0, 5.0, 0);
+  group.add(shadow, sprite, muzzle, label);
+  group.userData = { label, muzzle, type: "boss", sprite };
+  return group;
+}
+
+function currentWeapon() {
+  return weapons[state.weaponIndex] ?? weapons[0];
+}
+
+function applyOperation(count, op) {
+  if (op.type === "add") return count + op.value;
+  if (op.type === "subtract") return Math.max(0, count - op.value);
+  if (op.type === "multiply") return count * op.value;
+  if (op.type === "divide") return Math.max(0, Math.floor(count / op.value));
+  return count;
+}
+
+function opLabel(op) {
+  const symbols = { add: "+", subtract: "-", multiply: "x", divide: "/" };
+  return `${symbols[op.type]}${op.value}`;
+}
+
+function setAmmo(value) {
+  state.ammo = Math.max(0, Math.min(9999, Math.floor(value)));
+  ammoEl.textContent = state.ammo;
+  weaponEl.textContent = currentWeapon().name;
+  if (squadAmmoLabel) updateHpLabel(squadAmmoLabel, state.ammo);
+}
+
+function setHealth(value) {
+  state.health = THREE.MathUtils.clamp(Math.ceil(value), 0, state.maxHealth);
+  healthEl.textContent = state.health;
+  if (squadHealthBar) updateHealthBar(squadHealthBar, state.health, state.maxHealth);
+}
+
+function damagePlayer(amount) {
+  if (state.invulnerableTimer > 0 || state.phase === "result") return;
+  setHealth(state.health - amount);
+  state.invulnerableTimer = 0.22;
+  state.shakeTimer = Math.max(state.shakeTimer, 0.16);
+  showToast(`-${amount} HP`);
+  squadMembers.forEach((member) => member.userData.controller.setState("hit", { lockFor: 0.18, restart: true }));
+  if (state.health <= 0) {
+    state.failReason = "Squad Down";
+    finishRun(false);
+  }
+}
+
+function setWeapon(index) {
+  state.weaponIndex = THREE.MathUtils.clamp(index, 0, weapons.length - 1);
+  weaponEl.textContent = currentWeapon().name;
+  if (squadTierLabel) updateHpLabel(squadTierLabel, state.weaponIndex + 1);
+}
+
+function makeGate(x, z, op, width = 2.55) {
+  const gate = new THREE.Group();
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(width, 2.7, 0.16), materials.gatePanel);
+  panel.position.y = 1.55;
+  panel.castShadow = true;
+  gate.add(panel);
+
+  const frameGeo = new THREE.BoxGeometry(0.12, 3.1, 0.22);
+  for (const sx of [-width / 2, width / 2]) {
+    const post = new THREE.Mesh(frameGeo, materials.rail);
+    post.position.set(sx, 1.55, 0);
+    gate.add(post);
+  }
+
+  const top = new THREE.Mesh(new THREE.BoxGeometry(width + 0.24, 0.16, 0.24), materials.rail);
+  top.position.y = 3.12;
+  gate.add(top);
+
+  const label = makeTextSprite(opLabel(op), 1.05);
+  label.position.set(0, 1.72, 0.14);
+  gate.add(label);
+  gate.position.set(x, 0, z);
+  gate.userData = { op, hit: false, width };
+  levelGroup.add(gate);
+  gates.push(gate);
+}
+
+function makeDecrementGate(x, z, hp, rewardId, index = 0, total = 1, width = 2.55) {
+  const gate = new THREE.Group();
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(width, 2.7, 0.16), materials.gatePanel.clone());
+  panel.position.y = 1.55;
+  panel.castShadow = true;
+  gate.add(panel);
+
+  const frameGeo = new THREE.BoxGeometry(0.12, 3.1, 0.22);
+  for (const sx of [-width / 2, width / 2]) {
+    const post = new THREE.Mesh(frameGeo, materials.rail);
+    post.position.set(sx, 1.55, 0);
+    gate.add(post);
+  }
+
+  const top = new THREE.Mesh(new THREE.BoxGeometry(width + 0.24, 0.16, 0.24), materials.rail);
+  top.position.y = 3.12;
+  gate.add(top);
+
+  const label = makeHpLabel(hp, 0.9);
+  label.position.set(0, 1.72, 0.14);
+  const caption = makeTextSprite(`LOCK ${index + 1}/${total}`, 0.34);
+  caption.position.set(0, 2.72, 0.16);
+  gate.add(label, caption);
+  gate.position.set(x, 0, z);
+  gate.userData = {
+    hp,
+    maxHp: hp,
+    width,
+    label,
+    panel,
+    rewardId,
+    type: "decrementGate",
+    active: true,
+    hit: false,
+    flash: 0,
+  };
+  levelGroup.add(gate);
+  decrementGates.push(gate);
+}
+
+function makeWeaponPickup(x, z, weaponIndex) {
+  const weapon = weapons[weaponIndex];
+  const pickup = new THREE.Group();
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(1.35, 0.18, 1.15),
+    new THREE.MeshStandardMaterial({ color: weapon.color, emissive: weapon.color, emissiveIntensity: 0.24, roughness: 0.35 }),
+  );
+  base.position.y = 0.12;
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 0.62, 0.42), materials.weapon);
+  crate.position.y = 0.58;
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.86), materials.muzzle);
+  barrel.position.set(0.42, 0.63, -0.34);
+  const label = makeTextSprite(weapon.name.replace("Pulse ", ""), 0.42);
+  label.position.set(0, 1.2, 0);
+  pickup.add(base, crate, barrel, label);
+  pickup.position.set(x, 0, z);
+  pickup.userData = { hit: false, weaponIndex };
+  levelGroup.add(pickup);
+  weaponPickups.push(pickup);
+}
+
+function makeRewardPickup({ id, x, z, type, amount = 0, weaponIndex = 1 }) {
+  const weapon = weapons[weaponIndex] ?? weapons[1];
+  const pickup = new THREE.Group();
+  const color = weapon.color;
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.76, 0.94, 0.22, 6),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.32, roughness: 0.3 }),
+  );
+  base.position.y = 0.18;
+  const core = new THREE.Mesh(
+    new THREE.BoxGeometry(1.05, 0.55, 0.52),
+    materials.weapon,
+  );
+  core.position.y = 0.7;
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.96), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 }));
+  barrel.position.set(0.42, 0.72, -0.36);
+  const labelText = weapon.name.replace("Pulse ", "");
+  const label = makeTextSprite(labelText, 0.42);
+  label.position.set(0, 1.28, 0);
+  pickup.add(base, core, barrel, label);
+  pickup.position.set(x, 0, z);
+  pickup.visible = false;
+  pickup.userData = { id, hit: false, locked: true, type: "weapon", amount, weaponIndex, label };
+  levelGroup.add(pickup);
+  rewardPickups.push(pickup);
+}
+
+function makeObstacle(x, z, width = 1.15) {
+  const obstacle = new THREE.Mesh(new THREE.BoxGeometry(width, 1.05, 1.05), materials.obstacle);
+  obstacle.position.set(x, 0.54, z);
+  obstacle.castShadow = true;
+  obstacle.userData = { hit: false, width };
+  levelGroup.add(obstacle);
+  collidables.push(obstacle);
+}
+
+function makeCoin(x, z) {
+  const coin = makeAtlasSprite("coin", 0.72, 0.78);
+  coin.position.set(x, 0.9, z);
+  coin.userData = { hit: false };
+  levelGroup.add(coin);
+  coins.push(coin);
+}
+
+function makeEnemy(x, z, hp, type = "grunt") {
+  const enemy = new THREE.Group();
+  const config = ENEMY_TYPES[type] ?? ENEMY_TYPES.grunt;
+  const scale = config.scale;
+  const regionName = config.sprite;
+  const shadow = makeShadow(type === "heavy" ? 1.45 : 1.02, type === "heavy" ? 0.55 : 0.42);
+  const sprite = makeAtlasSprite(regionName, 1.15 * scale, 1.76 * scale);
+  sprite.material.color.setHex(type === "drone" ? 0x9cf7ff : type === "turret" ? 0xa7ff4f : 0xffffff);
+  sprite.position.y = 0.9 * scale;
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(0.25 * scale, 0.9 * scale, -0.72);
+  const armorColor = type === "heavy" ? 0xff5cff : type === "shield" ? 0xffd45a : type === "drone" ? 0x73e8ff : type === "turret" ? 0xa7ff4f : 0xff6a3d;
+  const shoulder = new THREE.Mesh(
+    new THREE.BoxGeometry(0.72 * scale, 0.16 * scale, 0.16),
+    new THREE.MeshStandardMaterial({ color: armorColor, emissive: armorColor, emissiveIntensity: 0.45, roughness: 0.35 }),
+  );
+  shoulder.position.set(0, 1.36 * scale, -0.08);
+  const warning = new THREE.Mesh(
+    new THREE.RingGeometry(0.22 * scale, 0.36 * scale, 28),
+    new THREE.MeshBasicMaterial({ color: armorColor, transparent: true, opacity: 0, depthWrite: false }),
+  );
+  warning.position.set(0.25 * scale, 1.02 * scale, -0.74);
+  enemy.add(shadow, sprite, shoulder, warning, muzzle);
+
+  const label = makeHpLabel(hp, type === "heavy" ? 0.95 : 0.78);
+  label.position.set(0, type === "heavy" ? 2.45 : 2.12, 0);
+  enemy.add(label);
+  enemy.position.set(x, 0, z);
+  enemy.userData = {
+    hp,
+    maxHp: hp,
+    hit: false,
+    type,
+    width: config.width,
+    label,
+    flash: 0,
+    active: true,
+    muzzle,
+    homeX: x,
+    baseZ: z,
+    warning,
+    shootWindup: 0,
+    movementTime: Math.random() * 4,
+    movementStyle: type === "drone" ? "zigzag" : type === "turret" ? "turret" : type === "heavy" ? "lunge" : type === "shield" ? "blocker" : "strafe",
+    strafeAmp: type === "drone" ? 1.35 : type === "grunt" ? 0.8 : type === "shield" ? 0.45 : 0.28,
+    strafeSpeed: type === "drone" ? 4.8 : type === "grunt" ? 2.6 : type === "shield" ? 1.45 : 1.1,
+    engagementRange: config.engagementRange,
+    fireRange: config.fireRange,
+    lockState: false,
+    lockPulse: 0,
+    shootCooldown: 0.45 + Math.random() * 0.55,
+    shootEvery: Math.max(0.36, config.shootEvery * 0.72),
+    shotCost: config.shotCost,
+    reward: config.reward,
+    anim: new AnimationController({
+      frames: { advance: ["a", "b", "c", "d"], shoot: ["s", "a"], hit: ["h", "a"], death: ["d"] },
+      frameDuration: 0.12,
+    }),
+    sprite,
+  };
+  levelGroup.add(enemy);
+  enemies.push(enemy);
+}
+
+function clearLevel() {
+  gates.length = 0;
+  decrementGates.length = 0;
+  collidables.length = 0;
+  coins.length = 0;
+  enemies.length = 0;
+  weaponPickups.length = 0;
+  rewardPickups.length = 0;
+  projectiles.length = 0;
+  while (levelGroup.children.length) levelGroup.remove(levelGroup.children[0]);
+  while (projectileGroup.children.length) projectileGroup.remove(projectileGroup.children[0]);
+}
+
+function buildLevel(levelData = generateLevel(state.level, { finishZ })) {
+  clearLevel();
+  state.currentLevelData = levelData;
+  applyTheme(levelData.theme);
+  levelData.sections.forEach((section) => {
+    if (section.gates) {
+      makeGate(-1.85, section.z, section.gates.left);
+      makeGate(1.85, section.z, section.gates.right);
+    }
+    section.decrementGates?.forEach((gate) => makeDecrementGate(gate.x, gate.z, gate.hp, gate.rewardId, gate.index, gate.total));
+    section.enemies.forEach((enemy) => makeEnemy(enemy.x, enemy.z, enemy.hp, enemy.type));
+  });
+  levelData.weaponPickups.forEach((pickup) => makeWeaponPickup(pickup.x, pickup.z, pickup.weaponIndex));
+  levelData.rewardPickups?.forEach((pickup) => makeRewardPickup(pickup));
+  levelData.obstacles.forEach((obstacle) => makeObstacle(obstacle.x, obstacle.z, obstacle.width));
+  levelData.coins.forEach((coin) => makeCoin(coin.x, coin.z));
+}
+
+function syncSquadModels() {
+  while (squadMembers.length < squadSize) {
+    const member = createSquadMember(squadMembers.length);
+    squadGroup.add(member);
+    squadMembers.push(member);
+  }
+
+  if (!squadAmmoLabel) {
+    squadAmmoLabel = makeHpLabel(state.ammo, 1);
+    squadAmmoLabel.position.set(0, 2.45, 0.25);
+    squadGroup.add(squadAmmoLabel);
+  }
+  if (!squadHealthBar) {
+    squadHealthBar = makeHealthBar(2.2);
+    squadHealthBar.position.set(0, 2.16, 0.25);
+    squadGroup.add(squadHealthBar);
+  }
+  if (!squadTierLabel) {
+    squadTierLabel = makeHpLabel(state.weaponIndex + 1, 0.55);
+    squadTierLabel.position.set(1.25, 2.45, 0.25);
+    squadGroup.add(squadTierLabel);
+  }
+
+  squadMembers.forEach((member, i) => {
+    const positions = [
+      [-0.8, 0.42],
+      [0, 0],
+      [0.8, 0.42],
+    ];
+    member.position.set(positions[i][0], 0, positions[i][1]);
+  });
+}
+
+function resetRun(nextLevel = false) {
+  if (nextLevel) state.level += 1;
+  state.speed = 12.8;
+  state.playerX = 0;
+  state.targetX = 0;
+  state.playerZ = 0;
+  state.distance = 0;
+  state.fireCooldown = 0;
+  state.bossAttackTimer = 1.2;
+  state.bossWindupTimer = 0;
+  state.failReason = "";
+  state.invulnerableTimer = 0;
+  state.maxHealth = 100 + Math.min(40, Math.floor((state.level - 1) * 4));
+  setHealth(state.maxHealth);
+  setWeapon(0);
+  state.toastTimer = 0;
+  state.hitFlashTimer = 0;
+  const levelData = generateLevel(state.level, { finishZ });
+  state.maxBossHp = levelData.bossHp;
+  state.bossHp = state.maxBossHp;
+  levelEl.textContent = state.level;
+  coinsEl.textContent = state.coins;
+  bossPanel.style.display = "none";
+  bossFill.style.width = "100%";
+  toastEl.textContent = "";
+  boss.position.set(0, 0, bossZ);
+  const bossSprite = boss.userData.sprite;
+  if (bossSprite) {
+    bossSprite.material.map = makeAtlasMaterial(levelData.bossType.sprite).map;
+    bossSprite.material.color.setHex(levelData.bossType.tint);
+    bossSprite.scale.set(levelData.bossType.sprite === "boss" ? 3.8 : 3.2, levelData.bossType.sprite === "boss" ? 4.95 : 4.15, 1);
+  }
+  boss.scale.setScalar(1 + Math.min(0.85, state.level * 0.055));
+  updateHpLabel(boss.userData.label, state.bossHp);
+  buildLevel(levelData);
+  setAmmo(levelData.startAmmo);
+  syncSquadModels();
+  squadGroup.position.set(0, 0, 0);
+  result.classList.add("hidden");
+}
+
+function showToast(text) {
+  toastEl.textContent = text;
+  state.toastTimer = 0.85;
+}
+
+function startRun() {
+  menu.classList.add("hidden");
+  resetRun(false);
+  state.phase = "running";
+}
+
+function finishRun(won) {
+  if (state.phase === "result") return;
+  state.phase = "result";
+  result.classList.remove("hidden");
+  resultTitle.textContent = won ? "Victory" : state.failReason || "Out of Ammo";
+  const reward = won ? Math.max(60, Math.floor(state.ammo * 0.35 + state.level * 38)) : Math.max(12, state.coins * 0.02 + state.level * 8);
+  state.coins += Math.floor(reward);
+  coinsEl.textContent = state.coins;
+  resultCopy.textContent = won
+    ? `The boss dropped ${Math.floor(reward)} coins. Stronger enemies are moving in.`
+    : state.failReason === "Enemy Breach"
+      ? "An enemy reached your squad before going down. Choose stronger math and grab better weapons earlier."
+      : `Your squad ran dry. Better gates and cleaner shooting will carry the next run.`;
+  restartButton.textContent = won ? "Next Run" : "Retry";
+  restartButton.dataset.next = won ? "true" : "false";
+}
+
+function resolveGate(gate) {
+  gate.userData.hit = true;
+  const before = state.ammo;
+  const after = applyOperation(before, gate.userData.op);
+  const delta = after - before;
+  setAmmo(after);
+  showToast(`${opLabel(gate.userData.op)} ${delta >= 0 ? "+" : ""}${delta}`);
+  gate.scale.set(1.05, 1.08, 1.05);
+}
+
+function resolveObstacle(obstacle) {
+  obstacle.userData.hit = true;
+  const loss = Math.max(6, Math.ceil(state.ammo * 0.08));
+  setAmmo(state.ammo - loss);
+  showToast(`Ammo leak -${loss}`);
+  obstacle.scale.set(1.25, 0.65, 1.25);
+}
+
+function collectCoin(coin) {
+  coin.userData.hit = true;
+  coin.visible = false;
+  state.coins += 1;
+  coinsEl.textContent = state.coins;
+}
+
+function collectWeaponPickup(pickup) {
+  pickup.userData.hit = true;
+  pickup.visible = false;
+  setWeapon(pickup.userData.weaponIndex);
+  const burst = new THREE.Mesh(
+    new THREE.RingGeometry(0.35, 0.55, 48),
+    new THREE.MeshBasicMaterial({ color: currentWeapon().color, transparent: true, opacity: 0.85, depthWrite: false }),
+  );
+  burst.rotation.x = -Math.PI / 2;
+  burst.position.set(squadGroup.position.x, 0.08, squadGroup.position.z - 0.4);
+  burst.userData = { effect: true, ttl: 0.42, ring: true };
+  projectileGroup.add(burst);
+  projectiles.push(burst);
+  state.shakeTimer = Math.max(state.shakeTimer, 0.18);
+  showToast(currentWeapon().name);
+}
+
+function collectRewardPickup(pickup) {
+  pickup.userData.hit = true;
+  pickup.visible = false;
+  const { weaponIndex } = pickup.userData;
+  setWeapon(Math.max(state.weaponIndex, weaponIndex));
+  showToast(`${currentWeapon().name} unlocked`);
+  const burst = new THREE.Mesh(
+    new THREE.RingGeometry(0.45, 0.68, 48),
+    new THREE.MeshBasicMaterial({ color: currentWeapon().color, transparent: true, opacity: 0.92, depthWrite: false }),
+  );
+  burst.rotation.x = -Math.PI / 2;
+  burst.position.set(pickup.position.x, 0.08, pickup.position.z);
+  burst.userData = { effect: true, ttl: 0.42, ring: true };
+  projectileGroup.add(burst);
+  projectiles.push(burst);
+}
+
+function unlockRewardIfReady(rewardId) {
+  const relatedGates = decrementGates.filter((gate) => gate.userData.rewardId === rewardId);
+  if (!relatedGates.length || relatedGates.some((gate) => gate.userData.active)) return;
+  rewardPickups
+    .filter((pickup) => pickup.userData.id === rewardId && pickup.userData.locked)
+    .forEach((pickup) => {
+      pickup.userData.locked = false;
+      pickup.visible = true;
+      const glow = new THREE.Mesh(
+        new THREE.RingGeometry(0.55, 0.95, 48),
+        new THREE.MeshBasicMaterial({ color: 0x73e8ff, transparent: true, opacity: 0.85, depthWrite: false }),
+      );
+      glow.rotation.x = -Math.PI / 2;
+      glow.position.set(pickup.position.x, 0.09, pickup.position.z);
+      glow.userData = { effect: true, ttl: 0.42, ring: true };
+      projectileGroup.add(glow);
+      projectiles.push(glow);
+    });
+}
+
+function spawnProjectile(target, weapon) {
+  const member = squadMembers[Math.floor(Math.random() * squadMembers.length)];
+  member.userData.flash.visible = true;
+  member.userData.flashTimer = 0.08;
+  const start = reusableVectors.one;
+  const targetPos = reusableVectors.two;
+  member.userData.muzzle.getWorldPosition(start);
+  target.getWorldPosition(targetPos);
+  targetPos.y += target.userData.type === "boss" ? 1.6 : target.userData.type === "decrementGate" ? 1.35 : 0.82;
+
+  const projectile = makeAtlasSprite(weapon.projectile, weapon.id === "laser" ? 0.95 : 0.72 + weapon.cost * 0.025, weapon.id === "laser" ? 0.58 : 0.32 + weapon.cost * 0.012);
+  projectile.material.color.setHex(weapon.color);
+  if (weapon.id === "overdrive") projectile.scale.multiplyScalar(1.45);
+  projectile.position.copy(start);
+  projectile.userData = {
+    target,
+    damage: weapon.damage,
+    speed: 46 + weapon.cost * 2,
+    spent: weapon.cost,
+    alive: true,
+  };
+  projectileGroup.add(projectile);
+  projectiles.push(projectile);
+  if (weapon.id === "cannon" || weapon.id === "laser") state.shakeTimer = Math.max(state.shakeTimer, 0.12);
+}
+
+function spawnEnemyProjectile(enemy) {
+  const start = reusableVectors.one;
+  enemy.userData.muzzle.getWorldPosition(start);
+  const targetPos = new THREE.Vector3(
+    squadGroup.position.x + (Math.random() - 0.5) * 1.2,
+    0.72,
+    squadGroup.position.z + 0.45,
+  );
+  const projectile = makeAtlasSprite("enemyBullet", 0.66, 0.3);
+  projectile.material.color.setHex(enemy.userData.type === "heavy" ? 0xff5cff : enemy.userData.type === "drone" ? 0x73e8ff : enemy.userData.type === "turret" ? 0xa7ff4f : 0xff6a3d);
+  projectile.position.copy(start);
+  const direction = targetPos.sub(start).normalize();
+  const speed = enemy.userData.type === "heavy" ? 28 : enemy.userData.type === "drone" ? 48 : enemy.userData.type === "turret" ? 38 : 35;
+  projectile.userData = {
+    hostile: true,
+    damage: enemy.userData.shotCost,
+    velocity: direction.multiplyScalar(speed),
+    radius: enemy.userData.type === "heavy" ? 0.7 : 0.48,
+    ttl: 2.4,
+    alive: true,
+  };
+  projectileGroup.add(projectile);
+  projectiles.push(projectile);
+}
+
+function spawnEnemyTelegraph(enemy) {
+  const length = Math.max(2.5, Math.abs(enemy.position.z - state.playerZ) - 0.8);
+  const color = enemy.userData.type === "heavy" ? 0xff5cff : enemy.userData.type === "drone" ? 0x73e8ff : enemy.userData.type === "turret" ? 0xa7ff4f : 0xff6a3d;
+  const beam = new THREE.Mesh(
+    new THREE.BoxGeometry(0.1, 0.035, length),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.52, depthWrite: false }),
+  );
+  beam.position.set(
+    (enemy.position.x + state.playerX) * 0.5,
+    0.72,
+    (enemy.position.z + state.playerZ) * 0.5,
+  );
+  beam.rotation.y = Math.atan2(state.playerX - enemy.position.x, state.playerZ - enemy.position.z);
+  beam.userData = { effect: true, ttl: 0.16 };
+  projectileGroup.add(beam);
+  projectiles.push(beam);
+}
+
+function enemyDistanceAhead(enemy) {
+  return state.playerZ - enemy.position.z;
+}
+
+function enemyIsShootable(enemy) {
+  const distance = enemyDistanceAhead(enemy);
+  return distance >= 3 && distance <= enemy.userData.engagementRange;
+}
+
+function spawnBossProjectile(pattern = "single", offsetX = 0, damage = 12, speed = 30, radius = 0.58) {
+  const start = reusableVectors.one;
+  boss.userData.muzzle.getWorldPosition(start);
+  const target = new THREE.Vector3(squadGroup.position.x + offsetX, 0.76, squadGroup.position.z + 0.35);
+  const projectile = makeAtlasSprite("enemyBullet", radius * 1.5, radius * 0.78);
+  projectile.material.color.setHex(state.currentLevelData?.bossType?.projectileColor ?? 0xff4bd8);
+  projectile.position.copy(start);
+  const direction = target.sub(start).normalize();
+  projectile.userData = {
+    hostile: true,
+    bossShot: true,
+    pattern,
+    damage,
+    velocity: direction.multiplyScalar(speed),
+    radius,
+    ttl: 3,
+    alive: true,
+  };
+  projectileGroup.add(projectile);
+  projectiles.push(projectile);
+}
+
+function findTarget() {
+  const aheadEnemies = enemies
+    .filter((enemy) => enemy.userData.active && !enemy.userData.hit && enemy.userData.hp > 0)
+    .filter((enemy) => enemy.position.z < state.playerZ - 3 && enemy.position.z > state.playerZ - 88)
+    .sort((a, b) => b.position.z - a.position.z);
+
+  const urgentEnemy = aheadEnemies.find((enemy) => enemy.position.z > state.playerZ - 18 && enemyIsShootable(enemy));
+  if (urgentEnemy) return urgentEnemy;
+
+  const laneGate = decrementGates
+    .filter((gate) => gate.userData.active && gate.userData.hp > 0)
+    .filter((gate) => Math.abs(gate.position.x - state.playerX) < gate.userData.width / 2 + 0.92)
+    .filter((gate) => gate.position.z < state.playerZ - 3 && gate.position.z > state.playerZ - 64)
+    .sort((a, b) => b.position.z - a.position.z)[0];
+  if (laneGate) return laneGate;
+
+  const shootableEnemies = aheadEnemies.filter(enemyIsShootable);
+  const laneEnemy = shootableEnemies.find((enemy) => Math.abs(enemy.position.x - state.playerX) < enemy.userData.width + 0.95);
+  if (laneEnemy) return laneEnemy;
+  if (shootableEnemies.length) return shootableEnemies[0];
+  if (state.phase === "boss" && state.bossHp > 0) return boss;
+  return null;
+}
+
+function shootAtTarget(dt) {
+  state.fireCooldown = Math.max(0, state.fireCooldown - dt);
+  const target = findTarget();
+  const weapon = currentWeapon();
+  weaponEl.textContent = weapon.name;
+  if (!target || state.fireCooldown > 0) return;
+  if (state.ammo < weapon.cost) {
+    if (state.ammo <= 0) finishRun(false);
+    return;
+  }
+  setAmmo(state.ammo - weapon.cost);
+  spawnProjectile(target, weapon);
+  state.fireCooldown = weapon.cooldown;
+}
+
+function updateEnemyShooting(dt) {
+  enemies.forEach((enemy) => {
+    if (!enemy.userData.active || enemy.userData.hp <= 0) return;
+    enemy.userData.movementTime += dt;
+    if (enemy.userData.movementStyle === "zigzag") {
+      enemy.position.x = enemy.userData.homeX + Math.sin(enemy.userData.movementTime * enemy.userData.strafeSpeed) * enemy.userData.strafeAmp;
+      enemy.position.z = enemy.userData.baseZ + Math.sin(enemy.userData.movementTime * 5.1) * 0.45;
+    } else if (enemy.userData.movementStyle === "strafe") {
+      enemy.position.x = enemy.userData.homeX + Math.sin(enemy.userData.movementTime * enemy.userData.strafeSpeed) * enemy.userData.strafeAmp;
+    } else if (enemy.userData.movementStyle === "blocker") {
+      enemy.position.x = THREE.MathUtils.lerp(enemy.position.x, enemy.userData.homeX + Math.sin(enemy.userData.movementTime * enemy.userData.strafeSpeed) * enemy.userData.strafeAmp, 0.08);
+      enemy.position.z = enemy.userData.baseZ + Math.sin(enemy.userData.movementTime * 2.2) * 0.22;
+    } else if (enemy.userData.movementStyle === "lunge") {
+      enemy.position.x = enemy.userData.homeX + Math.sin(enemy.userData.movementTime * 1.35) * enemy.userData.strafeAmp;
+      enemy.position.z = enemy.userData.baseZ + Math.max(0, Math.sin(enemy.userData.movementTime * 2.4)) * 0.55;
+    }
+    enemy.position.x = THREE.MathUtils.clamp(enemy.position.x, -laneWidth / 2 + 0.45, laneWidth / 2 - 0.45);
+
+    const distance = enemyDistanceAhead(enemy);
+    const inRange = distance > 2 && distance < enemy.userData.fireRange;
+    if (!inRange) return;
+    if (enemy.userData.shootWindup > 0) {
+      enemy.userData.shootWindup -= dt;
+      enemy.userData.warning.material.opacity = 0.28 + Math.sin(performance.now() * 0.04) * 0.2;
+      if (enemy.userData.shootWindup <= 0) {
+        enemy.userData.warning.material.opacity = 0;
+        spawnEnemyProjectile(enemy);
+      }
+      return;
+    }
+    enemy.userData.shootCooldown -= dt;
+    if (enemy.userData.shootCooldown <= 0) {
+      enemy.userData.shootWindup = enemy.userData.type === "heavy" ? 0.28 : enemy.userData.type === "turret" ? 0.12 : 0.18;
+      spawnEnemyTelegraph(enemy);
+      enemy.userData.shootCooldown = enemy.userData.shootEvery;
+    }
+  });
+}
+
+function updateBossAttacks(dt) {
+  if (state.phase !== "boss" || state.bossHp <= 0) return;
+  state.bossWindupTimer = Math.max(0, state.bossWindupTimer - dt);
+  state.bossAttackTimer -= dt;
+  if (state.bossAttackTimer > 0) return;
+
+  const level = state.level;
+  const patternRoll = (level + Math.floor(performance.now() * 0.001)) % 3;
+  const damage = 9 + Math.min(10, Math.floor(level * 1.2));
+  if (patternRoll === 0) {
+    spawnBossProjectile("single", 0, damage + 2, 31, 0.62);
+  } else if (patternRoll === 1) {
+    spawnBossProjectile("spread", -1.15, damage, 29, 0.54);
+    spawnBossProjectile("spread", 1.15, damage, 29, 0.54);
+  } else {
+    spawnBossProjectile("fan", -1.85, Math.max(6, damage - 2), 27, 0.46);
+    spawnBossProjectile("fan", 0, damage, 30, 0.52);
+    spawnBossProjectile("fan", 1.85, Math.max(6, damage - 2), 27, 0.46);
+  }
+  state.shakeTimer = Math.max(state.shakeTimer, 0.09);
+  state.bossAttackTimer = Math.max(0.72, 1.32 - Math.min(0.34, level * 0.025));
+}
+
+function damageEnemy(enemy, amount) {
+  enemy.userData.hp = Math.max(0, enemy.userData.hp - amount);
+  enemy.userData.flash = 0.16;
+  updateHpLabel(enemy.userData.label, enemy.userData.hp);
+  if (enemy.userData.hp <= 0) {
+    enemy.userData.hit = true;
+    enemy.userData.active = false;
+    const boom = makeAtlasSprite("explosion", enemy.userData.type === "heavy" ? 2.4 : 1.65, enemy.userData.type === "heavy" ? 1.8 : 1.25);
+    boom.position.set(enemy.position.x, 1.05, enemy.position.z);
+    boom.userData = { effect: true, ttl: 0.34 };
+    projectileGroup.add(boom);
+    projectiles.push(boom);
+    enemy.visible = false;
+    state.coins += enemy.userData.reward;
+    coinsEl.textContent = state.coins;
+  }
+}
+
+function damageDecrementGate(gate, amount) {
+  if (!gate.userData.active) return;
+  gate.userData.hp = Math.max(0, gate.userData.hp - amount);
+  gate.userData.flash = 0.13;
+  updateHpLabel(gate.userData.label, gate.userData.hp);
+  const ratio = gate.userData.hp / gate.userData.maxHp;
+  gate.userData.panel.material.opacity = 0.48 + ratio * 0.34;
+  gate.userData.panel.scale.x = 0.72 + ratio * 0.28;
+  if (gate.userData.hp <= 0) {
+    gate.userData.hit = true;
+    gate.userData.active = false;
+    gate.visible = false;
+    const shatter = makeAtlasSprite("explosion", 1.9, 1.35);
+    shatter.material.color.setHex(0x73e8ff);
+    shatter.position.set(gate.position.x, 1.25, gate.position.z);
+    shatter.userData = { effect: true, ttl: 0.34 };
+    projectileGroup.add(shatter);
+    projectiles.push(shatter);
+    unlockRewardIfReady(gate.userData.rewardId);
+  }
+}
+
+function damageBoss(amount) {
+  state.bossHp = Math.max(0, state.bossHp - amount);
+  state.hitFlashTimer = 0.14;
+  bossFill.style.width = `${(state.bossHp / state.maxBossHp) * 100}%`;
+  updateHpLabel(boss.userData.label, state.bossHp);
+}
+
+function updateProjectiles(dt) {
+  for (let i = projectiles.length - 1; i >= 0; i -= 1) {
+    const projectile = projectiles[i];
+    if (projectile.userData.effect) {
+      projectile.userData.ttl -= dt;
+      projectile.scale.multiplyScalar(1 + dt * (projectile.userData.ring ? 6.5 : 2.2));
+      projectile.material.opacity = Math.max(0, projectile.userData.ttl / (projectile.userData.ring ? 0.42 : 0.34));
+      if (projectile.userData.ttl <= 0) {
+        projectileGroup.remove(projectile);
+        projectiles.splice(i, 1);
+      }
+      continue;
+    }
+
+    if (!projectile.userData.alive) {
+      projectileGroup.remove(projectile);
+      projectiles.splice(i, 1);
+      continue;
+    }
+
+    if (projectile.userData.hostile) {
+      projectile.userData.ttl -= dt;
+      projectile.position.add(projectile.userData.velocity.clone().multiplyScalar(dt));
+      const dx = projectile.position.x - squadGroup.position.x;
+      const dz = projectile.position.z - squadGroup.position.z;
+      const closeY = Math.abs(projectile.position.y - 0.75) < 1.25;
+      if (Math.hypot(dx, dz) < projectile.userData.radius + 0.72 && closeY) {
+        damagePlayer(projectile.userData.damage);
+        projectileGroup.remove(projectile);
+        projectiles.splice(i, 1);
+        continue;
+      }
+      if (projectile.userData.ttl <= 0 || projectile.position.z > squadGroup.position.z + 6) {
+        projectileGroup.remove(projectile);
+        projectiles.splice(i, 1);
+      }
+      continue;
+    }
+
+    if (!projectile.userData.target.visible) {
+      projectileGroup.remove(projectile);
+      projectiles.splice(i, 1);
+      continue;
+    }
+
+    const target = projectile.userData.target;
+    const targetPos = reusableVectors.one;
+    target.getWorldPosition(targetPos);
+    targetPos.y += target === boss ? 1.45 : 0.8;
+    const direction = targetPos.sub(projectile.position);
+    const distance = direction.length();
+
+    if (distance < 0.55) {
+      if (target === boss) {
+        damageBoss(projectile.userData.damage);
+      } else if (target.userData.type === "decrementGate") {
+        damageDecrementGate(target, projectile.userData.damage);
+      } else {
+        damageEnemy(target, projectile.userData.damage);
+      }
+      projectileGroup.remove(projectile);
+      projectiles.splice(i, 1);
+      continue;
+    }
+
+    projectile.position.add(direction.normalize().multiplyScalar(projectile.userData.speed * dt));
+    projectile.scale.setScalar(1 + Math.sin(performance.now() * 0.03) * 0.18);
+  }
+}
+
+function updateRunning(dt) {
+  state.distance += state.speed * dt;
+  state.playerZ = -state.distance;
+  state.playerX = THREE.MathUtils.lerp(state.playerX, state.targetX, 1 - Math.pow(0.001, dt));
+  state.playerX = THREE.MathUtils.clamp(state.playerX, -laneWidth / 2 + 0.55, laneWidth / 2 - 0.55);
+
+  squadGroup.position.set(state.playerX, 0, state.playerZ);
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, state.playerX * 0.32, 0.08);
+  camera.position.z = state.playerZ + 13;
+  if (state.shakeTimer > 0) {
+    state.shakeTimer -= dt;
+    camera.position.x += (Math.random() - 0.5) * 0.12;
+    camera.position.y += (Math.random() - 0.5) * 0.08;
+  }
+  camera.lookAt(state.playerX * 0.25, 0.95, state.playerZ - 8.2);
+
+  const squadFront = state.playerZ - 0.35;
+  gates.forEach((gate) => {
+    if (gate.userData.hit) return;
+    const closeZ = Math.abs(squadFront - gate.position.z) < 1.2;
+    const closeX = Math.abs(state.playerX - gate.position.x) < gate.userData.width / 2;
+    if (closeZ && closeX) resolveGate(gate);
+  });
+
+  collidables.forEach((obstacle) => {
+    if (obstacle.userData.hit) return;
+    const closeZ = Math.abs(squadFront - obstacle.position.z) < 1.1;
+    const closeX = Math.abs(state.playerX - obstacle.position.x) < obstacle.userData.width / 2 + 0.55;
+    if (closeZ && closeX) resolveObstacle(obstacle);
+  });
+
+  coins.forEach((coin) => {
+    if (coin.userData.hit) return;
+    if (Math.abs(squadFront - coin.position.z) < 0.8 && Math.abs(state.playerX - coin.position.x) < 0.8) {
+      collectCoin(coin);
+    }
+  });
+
+  weaponPickups.forEach((pickup) => {
+    if (pickup.userData.hit) return;
+    if (Math.abs(squadFront - pickup.position.z) < 1.25 && Math.abs(state.playerX - pickup.position.x) < 1.05) {
+      collectWeaponPickup(pickup);
+    }
+  });
+
+  rewardPickups.forEach((pickup) => {
+    if (pickup.userData.hit || pickup.userData.locked) return;
+    if (Math.abs(squadFront - pickup.position.z) < 1.25 && Math.abs(state.playerX - pickup.position.x) < 1.05) {
+      collectRewardPickup(pickup);
+    }
+  });
+
+  decrementGates.forEach((gate) => {
+    if (!gate.userData.active) return;
+    const passedAlive = gate.position.z > state.playerZ + 1.1;
+    if (passedAlive) {
+      gate.userData.active = false;
+      gate.userData.hit = true;
+      gate.visible = false;
+    }
+  });
+
+  enemies.forEach((enemy) => {
+    if (!enemy.userData.active) return;
+    const passedAlive = enemy.position.z > state.playerZ - 0.7;
+    if (passedAlive) {
+      state.failReason = "Enemy Breach";
+      finishRun(false);
+    }
+  });
+
+  updateEnemyShooting(dt);
+  shootAtTarget(dt);
+  if (state.ammo <= 0) {
+    finishRun(false);
+    return;
+  }
+
+  if (state.playerZ <= finishZ) {
+    state.phase = "boss";
+    bossPanel.style.display = "flex";
+    showToast("Boss Fight");
+  }
+}
+
+function updateBossFight(dt) {
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, 0, 0.05);
+  camera.position.z = THREE.MathUtils.lerp(camera.position.z, bossZ + 13, 0.04);
+  if (state.shakeTimer > 0) {
+    state.shakeTimer -= dt;
+    camera.position.x += (Math.random() - 0.5) * 0.14;
+    camera.position.y += (Math.random() - 0.5) * 0.09;
+  }
+  camera.lookAt(0, 1.2, bossZ - 2);
+  squadGroup.position.z = THREE.MathUtils.lerp(squadGroup.position.z, bossZ + 5.2, 0.04);
+  squadGroup.position.x = THREE.MathUtils.lerp(squadGroup.position.x, 0, 0.05);
+  boss.rotation.y += dt * 0.75;
+  boss.position.y = Math.sin(performance.now() * 0.006) * 0.06;
+
+  updateBossAttacks(dt);
+  shootAtTarget(dt);
+  if (state.bossHp <= 0) {
+    boss.scale.setScalar(Math.max(0.1, boss.scale.x - dt * 2.5));
+    if (boss.scale.x <= 0.14) finishRun(true);
+  } else if (state.ammo <= 0 && projectiles.length === 0) {
+    finishRun(false);
+  }
+}
+
+function updateWorld(dt) {
+  gates.forEach((gate) => {
+    gate.children.forEach((child) => {
+      if (child.isSprite) child.quaternion.copy(camera.quaternion);
+    });
+    gate.scale.lerp(new THREE.Vector3(1, 1, 1), 0.12);
+  });
+
+  decrementGates.forEach((gate) => {
+    gate.children.forEach((child) => {
+      if (child.isSprite) child.quaternion.copy(camera.quaternion);
+    });
+    if (gate.userData.flash > 0) {
+      gate.userData.flash -= dt;
+      gate.scale.setScalar(1.08);
+    } else {
+      const pulse = 1 + Math.sin(performance.now() * 0.006 + gate.position.z) * 0.018;
+      gate.scale.lerp(new THREE.Vector3(pulse, 1, pulse), 0.1);
+    }
+  });
+
+  enemies.forEach((enemy) => {
+    enemy.children.forEach((child) => {
+      if (child.isSprite) child.quaternion.copy(camera.quaternion);
+    });
+    const shootable = enemy.userData.active && enemyIsShootable(enemy);
+    if (shootable && !enemy.userData.lockState) {
+      enemy.userData.lockState = true;
+      enemy.userData.lockPulse = 0.28;
+      enemy.scale.setScalar(1.08);
+    } else if (!shootable) {
+      enemy.userData.lockState = false;
+    }
+    if (enemy.userData.label?.material) {
+      enemy.userData.label.material.opacity = shootable ? 1 : 0.52;
+    }
+    if (enemy.userData.lockPulse > 0) {
+      enemy.userData.lockPulse -= dt;
+      enemy.userData.warning.material.opacity = Math.max(enemy.userData.warning.material.opacity, enemy.userData.lockPulse * 1.8);
+    }
+    if (enemy.userData.flash > 0) {
+      enemy.userData.flash -= dt;
+      enemy.scale.setScalar(1.12);
+    } else {
+      enemy.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+    }
+    if (enemy.userData.warning && enemy.userData.shootWindup <= 0) {
+      enemy.userData.warning.material.opacity = THREE.MathUtils.lerp(enemy.userData.warning.material.opacity, 0, 0.18);
+    }
+  });
+
+  boss.userData.label.quaternion.copy(camera.quaternion);
+  if (squadAmmoLabel) squadAmmoLabel.quaternion.copy(camera.quaternion);
+  if (squadTierLabel) squadTierLabel.quaternion.copy(camera.quaternion);
+  if (state.hitFlashTimer > 0) {
+    state.hitFlashTimer -= dt;
+    boss.scale.multiplyScalar(1.002);
+  }
+
+  collidables.forEach((obstacle, i) => {
+    obstacle.rotation.y += dt * (0.62 + i * 0.08);
+    obstacle.scale.lerp(new THREE.Vector3(1, 1, 1), 0.08);
+  });
+
+  coins.forEach((coin) => {
+    if (!coin.userData.hit) {
+      coin.material.rotation += dt * 2.8;
+      coin.position.y = 0.9 + Math.sin(performance.now() * 0.004 + coin.position.z) * 0.08;
+    }
+  });
+
+  rewardPickups.forEach((pickup) => {
+    if (pickup.visible && !pickup.userData.hit) {
+      pickup.rotation.y += dt * 1.2;
+      pickup.position.y = Math.sin(performance.now() * 0.004 + pickup.position.z) * 0.09;
+      pickup.children.forEach((child) => {
+        if (child.isSprite) child.quaternion.copy(camera.quaternion);
+      });
+    }
+  });
+
+  squadMembers.forEach((member, i) => {
+    const weapon = currentWeapon();
+    const tier = state.weaponIndex;
+    const controller = member.userData.controller;
+    if (member.userData.flashTimer > 0 || weapon.id !== "carbine") controller.setState("shootRun");
+    else controller.setState("run");
+    if (member.userData.lastWeaponId !== weapon.id) {
+      member.userData.lastWeaponId = weapon.id;
+      controller.setState("upgrade", { lockFor: 0.32, restart: true });
+      member.userData.flash.visible = true;
+      member.userData.flashTimer = 0.16;
+      member.userData.aura.scale.setScalar(1.45);
+    }
+    const frame = controller.update(dt);
+    const tierFrame = `t${tier}_${frame}`;
+    if (member.userData.sprite.userData.frame !== tierFrame) setRunnerFrame(member.userData.sprite, tierFrame);
+    member.userData.aura.material.color.setHex(weapon.color);
+    member.userData.aura.material.opacity = 0.18 + state.weaponIndex * 0.05 + Math.sin(performance.now() * 0.008 + i) * 0.08;
+    const targetAuraScale = 0.92 + state.weaponIndex * 0.12;
+    member.userData.aura.scale.lerp(new THREE.Vector3(targetAuraScale, targetAuraScale, targetAuraScale), 0.12);
+    member.rotation.z = Math.sin(performance.now() * 0.006 + i) * 0.012;
+    member.position.y = THREE.MathUtils.lerp(member.position.y, 0, 0.18);
+    if (member.userData.flashTimer > 0) {
+      member.userData.flashTimer -= dt;
+      member.userData.flash.visible = member.userData.flashTimer > 0;
+    }
+  });
+
+  if (state.toastTimer > 0) {
+    state.toastTimer -= dt;
+    toastEl.style.opacity = `${Math.min(1, state.toastTimer * 2)}`;
+    toastEl.style.transform = `translate(-50%, ${Math.round((0.85 - state.toastTimer) * -18)}px)`;
+  } else {
+    toastEl.textContent = "";
+  }
+}
+
+function resize() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  renderer.setSize(width, height, false);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+}
+
+let pointerActive = false;
+let pointerStartX = 0;
+let startTargetX = 0;
+
+function onPointerDown(event) {
+  pointerActive = true;
+  pointerStartX = event.clientX;
+  startTargetX = state.targetX;
+}
+
+function onPointerMove(event) {
+  if (!pointerActive) return;
+  const delta = (event.clientX - pointerStartX) / Math.max(1, window.innerWidth);
+  state.targetX = THREE.MathUtils.clamp(startTargetX + delta * laneWidth * 2.2, -laneWidth / 2 + 0.55, laneWidth / 2 - 0.55);
+}
+
+function onPointerUp() {
+  pointerActive = false;
+}
+
+function onKey(event) {
+  if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") state.targetX -= 0.8;
+  if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") state.targetX += 0.8;
+  state.targetX = THREE.MathUtils.clamp(state.targetX, -laneWidth / 2 + 0.55, laneWidth / 2 - 0.55);
+}
+
+startButton.addEventListener("click", startRun);
+restartButton.addEventListener("click", () => {
+  resetRun(restartButton.dataset.next === "true");
+  state.phase = "running";
+});
+window.addEventListener("resize", resize);
+window.addEventListener("pointerdown", onPointerDown);
+window.addEventListener("pointermove", onPointerMove);
+window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("keydown", onKey);
+
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(0.033, (now - last) / 1000);
+  last = now;
+
+  updateWorld(dt);
+  updateProjectiles(dt);
+  if (state.phase === "running") updateRunning(dt);
+  if (state.phase === "boss") updateBossFight(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+resize();
+resetRun(false);
+requestAnimationFrame(tick);
