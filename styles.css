@@ -35,6 +35,7 @@ body {
 #hud,
 #boss-panel,
 #toast,
+#audio-toggle,
 .overlay {
   position: fixed;
   z-index: 2;
@@ -120,6 +121,21 @@ body {
   font-weight: 900;
   text-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
   pointer-events: none;
+}
+
+#audio-toggle {
+  z-index: 3;
+  right: max(14px, env(safe-area-inset-right));
+  top: calc(max(14px, env(safe-area-inset-top)) + 68px);
+  width: auto;
+  min-height: 38px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(10, 15, 22, 0.68);
+  color: #f7fbff;
+  font-size: 0.78rem;
+  backdrop-filter: blur(14px);
 }
 
 .overlay {

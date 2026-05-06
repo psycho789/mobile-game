@@ -2,10 +2,10 @@ export const LANE_X = [-2.35, 0, 2.35];
 
 export const WEAPONS = [
   { id: "carbine", name: "Carbine", cost: 1, damage: 4.2, cooldown: 0.085, color: 0x9cf7ff, projectile: "playerBullet" },
-  { id: "rifle", name: "Pulse Rifle", cost: 1, damage: 7.4, cooldown: 0.078, color: 0x75ff9b, projectile: "playerBullet" },
-  { id: "cannon", name: "Cannon", cost: 2, damage: 22, cooldown: 0.115, color: 0xffd45a, projectile: "enemyBullet" },
-  { id: "laser", name: "Laser", cost: 4, damage: 54, cooldown: 0.155, color: 0x9cf7ff, projectile: "flash" },
-  { id: "overdrive", name: "Overdrive", cost: 5, damage: 82, cooldown: 0.13, color: 0xfff06a, projectile: "flash" },
+  { id: "rifle", name: "Pulse Rifle", cost: 3, damage: 9.8, cooldown: 0.074, color: 0x75ff9b, projectile: "playerBullet" },
+  { id: "cannon", name: "Cannon", cost: 8, damage: 34, cooldown: 0.118, color: 0xffd45a, projectile: "enemyBullet" },
+  { id: "laser", name: "Laser", cost: 16, damage: 82, cooldown: 0.17, color: 0x9cf7ff, projectile: "flash" },
+  { id: "overdrive", name: "Overdrive", cost: 26, damage: 138, cooldown: 0.145, color: 0xfff06a, projectile: "flash" },
 ];
 
 export const ENEMY_TYPES = {
@@ -17,10 +17,79 @@ export const ENEMY_TYPES = {
 };
 
 export const BOSS_TYPES = [
-  { id: "cannonKing", name: "Cannon King", sprite: "boss", hp: 1, tint: 0xffffff, projectileColor: 0xff4bd8 },
-  { id: "hoverMech", name: "Hover Mech", sprite: "heavy", hp: 0.82, tint: 0x8fe8ff, projectileColor: 0x65e8ff },
-  { id: "shieldKnight", name: "Shield Knight", sprite: "shield", hp: 1.12, tint: 0xffd45a, projectileColor: 0xffa33d },
-  { id: "cyberBeast", name: "Cyber Beast", sprite: "boss", hp: 1.22, tint: 0xff86ff, projectileColor: 0xb66cff },
+  {
+    id: "cannonKing",
+    name: "Cannon King",
+    sprite: "boss",
+    attackSprite: "heavy",
+    hp: 1,
+    tint: 0xffffff,
+    attackTint: 0xffa34a,
+    projectileColor: 0xff4bd8,
+    attackRate: 0.46,
+    enrageRate: 0.34,
+    burstCount: 3,
+    damage: 11,
+    projectileSpeed: 35,
+    patterns: ["turret", "fan", "barrage"],
+    shieldHp: 0,
+    enrageAt: 0.42,
+  },
+  {
+    id: "hoverMech",
+    name: "Hover Mech",
+    sprite: "heavy",
+    attackSprite: "boss",
+    hp: 0.92,
+    tint: 0x8fe8ff,
+    attackTint: 0x65e8ff,
+    projectileColor: 0x65e8ff,
+    attackRate: 0.38,
+    enrageRate: 0.29,
+    burstCount: 2,
+    damage: 9,
+    projectileSpeed: 42,
+    patterns: ["sweep", "spread", "turret"],
+    shieldHp: 0.22,
+    enrageAt: 0.45,
+  },
+  {
+    id: "shieldKnight",
+    name: "Shield Knight",
+    sprite: "shield",
+    attackSprite: "boss",
+    hp: 1.18,
+    tint: 0xffd45a,
+    attackTint: 0xfff1a8,
+    projectileColor: 0xffa33d,
+    attackRate: 0.55,
+    enrageRate: 0.38,
+    burstCount: 3,
+    damage: 12,
+    projectileSpeed: 33,
+    patterns: ["wall", "fan", "shieldBurst"],
+    shieldHp: 0.48,
+    shieldRegen: 7,
+    enrageAt: 0.5,
+  },
+  {
+    id: "cyberBeast",
+    name: "Cyber Beast",
+    sprite: "boss",
+    attackSprite: "grunt",
+    hp: 1.28,
+    tint: 0xff86ff,
+    attackTint: 0xb66cff,
+    projectileColor: 0xb66cff,
+    attackRate: 0.34,
+    enrageRate: 0.24,
+    burstCount: 4,
+    damage: 8,
+    projectileSpeed: 46,
+    patterns: ["barrage", "sweep", "fan"],
+    shieldHp: 0.14,
+    enrageAt: 0.38,
+  },
 ];
 
 export const THEMES = [
@@ -102,9 +171,84 @@ function rng(seed) {
 function applyOperation(count, op) {
   if (op.type === "add") return count + op.value;
   if (op.type === "subtract") return Math.max(0, count - op.value);
-  if (op.type === "multiply") return count * op.value;
+  if (op.type === "multiply") return Math.floor(count * op.value);
   if (op.type === "divide") return Math.max(0, Math.floor(count / op.value));
   return count;
+}
+
+function pickWeighted(random, entries) {
+  const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = random() * total;
+  for (const entry of entries) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.value ?? entry;
+  }
+  return entries[entries.length - 1].value ?? entries[entries.length - 1];
+}
+
+function makeMathGatePair({ random, level, sectionIndex, hard, recentTemplates }) {
+  const base = 26 + hard * 5 + sectionIndex * 4;
+  const variance = Math.floor(random() * (18 + hard * 2));
+  const templates = [
+    {
+      id: "closeAdds",
+      weight: 34,
+      make: () => [
+        { type: "add", value: base + variance },
+        { type: "add", value: base + 12 + Math.floor(random() * 20) },
+      ],
+    },
+    {
+      id: "addVsMildMult",
+      weight: 27,
+      make: () => [
+        { type: "add", value: base + 18 + variance },
+        { type: "multiply", value: [1.15, 1.2, 1.25, 1.35][Math.floor(random() * 4)] },
+      ],
+    },
+    {
+      id: "smallRisk",
+      weight: 16,
+      make: () => [
+        { type: "subtract", value: 10 + hard * 2 + Math.floor(random() * 20) },
+        { type: "add", value: base + 35 + variance },
+      ],
+    },
+    {
+      id: "tempoChoice",
+      weight: 11,
+      make: () => [
+        { type: "multiply", value: [1.35, 1.45, 1.5][Math.floor(random() * 3)] },
+        { type: "add", value: base + 46 + variance },
+      ],
+    },
+    {
+      id: "divideTrap",
+      weight: 7,
+      make: () => [
+        { type: "divide", value: 2 },
+        { type: "add", value: base + 58 + hard * 6 + variance },
+      ],
+    },
+    {
+      id: "rareJackpot",
+      weight: level > 2 && sectionIndex > 8 ? 4 : 1,
+      make: () => [
+        { type: "multiply", value: level > 7 && random() > 0.82 ? 2.5 : 2 },
+        { type: "subtract", value: 35 + hard * 5 + Math.floor(random() * 42) },
+      ],
+    },
+  ].map((template) => ({
+    ...template,
+    weight: recentTemplates.includes(template.id) ? Math.max(1, Math.floor(template.weight * 0.2)) : template.weight,
+  }));
+
+  const template = pickWeighted(random, templates);
+  recentTemplates.push(template.id);
+  if (recentTemplates.length > 3) recentTemplates.shift();
+  const pair = template.make();
+  const swap = random() > 0.5;
+  return { left: swap ? pair[0] : pair[1], right: swap ? pair[1] : pair[0], template: template.id };
 }
 
 export function simulateBestPath(startAmmo, gatePairs) {
@@ -128,24 +272,14 @@ export function generateLevel(level, { finishZ = -292 } = {}) {
   const obstacles = [];
   const vaultWeaponProgression = level < 3 ? [1, 2, 2, 3] : level < 6 ? [1, 2, 3, 3, 4] : [1, 2, 3, 4, 4, 4];
   let vaultIndex = 0;
+  const recentTemplates = [];
 
   for (let i = 0; i < sections; i += 1) {
     const z = startZ - i * spacing;
     const isMathSection = i === 0 || (i > 2 && (i + level) % 4 === 0) || (i > 10 && (i + level) % 7 === 0);
     const isVaultSection = !isMathSection && (i === 1 || i % 4 === 2 || (i > 9 && i % 5 === 0));
     const gates = isMathSection ? (() => {
-      const addValue = 42 + hard * 9 + i * 9;
-      const subtractValue = 16 + hard * 4 + i * 4;
-      const multValue = i > 7 || hard > 4 ? 3 : 2;
-      const pool = [
-        [{ type: "add", value: addValue }, { type: "multiply", value: multValue }],
-        [{ type: "subtract", value: subtractValue }, { type: "add", value: addValue + 22 }],
-        [{ type: "multiply", value: 2 }, { type: "divide", value: 2 }],
-        [{ type: "add", value: addValue + 34 }, { type: "subtract", value: subtractValue + 18 }],
-      ];
-      const pair = pool[(i + level) % pool.length];
-      const swap = random() > 0.5;
-      const gatePair = { left: swap ? pair[0] : pair[1], right: swap ? pair[1] : pair[0] };
+      const gatePair = makeMathGatePair({ random, level, sectionIndex: i, hard, recentTemplates });
       gatePairs.push(gatePair);
       return gatePair;
     })() : null;

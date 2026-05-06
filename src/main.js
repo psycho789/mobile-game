@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { AnimationController } from "./animation.js";
+import { initAudio, isAudioEnabled, playSound, playWeaponSound, setAudioEnabled, startLoop, stopLoop } from "./audio.js";
 import { ENEMY_TYPES, WEAPONS, generateLevel } from "./level-generator.js";
 
 const canvas = document.querySelector("#game");
@@ -17,6 +18,7 @@ const resultTitle = document.querySelector("#result-title");
 const resultCopy = document.querySelector("#result-copy");
 const startButton = document.querySelector("#start");
 const restartButton = document.querySelector("#restart");
+const audioToggle = document.querySelector("#audio-toggle");
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -63,6 +65,10 @@ const state = {
   distance: 0,
   bossHp: 0,
   maxBossHp: 0,
+  bossShieldHp: 0,
+  maxBossShieldHp: 0,
+  bossEnraged: false,
+  bossAttackIndex: 0,
   bossAttackTimer: 0,
   bossWindupTimer: 0,
   fireCooldown: 0,
@@ -160,6 +166,7 @@ finish.position.set(0, 0.03, finishZ);
 world.add(finish);
 
 let boss;
+let bossShieldBar;
 
 const squadMembers = [];
 let squadAmmoLabel;
@@ -370,6 +377,15 @@ function updateHealthBar(bar, health, maxHealth) {
   bar.userData.fill.material.color.setHex(color);
 }
 
+function updateShieldBar(bar, shield, maxShield) {
+  if (!bar) return;
+  const hasShield = maxShield > 0 && shield > 0;
+  bar.visible = hasShield;
+  const ratio = hasShield ? THREE.MathUtils.clamp(shield / maxShield, 0, 1) : 0;
+  bar.userData.fill.scale.x = ratio;
+  bar.userData.fill.material.color.setHex(ratio > 0.45 ? 0x73e8ff : 0xffd45a);
+}
+
 function updateHpLabel(sprite, value) {
   const next = `${Math.max(0, Math.ceil(value))}`;
   if (sprite.userData.last === next) return;
@@ -446,10 +462,19 @@ function createBoss() {
   sprite.position.y = 2.38;
   const muzzle = new THREE.Object3D();
   muzzle.position.set(0.56, 1.6, -0.95);
+  const aura = new THREE.Mesh(
+    new THREE.RingGeometry(1.65, 2.05, 64),
+    new THREE.MeshBasicMaterial({ color: 0xff4bd8, transparent: true, opacity: 0.28, depthWrite: false }),
+  );
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.08;
   const label = makeHpLabel(0, 1.05);
   label.position.set(0, 5.0, 0);
-  group.add(shadow, sprite, muzzle, label);
-  group.userData = { label, muzzle, type: "boss", sprite };
+  const shieldBar = makeHealthBar(2.8);
+  shieldBar.position.set(0, 4.68, 0);
+  shieldBar.visible = false;
+  group.add(shadow, aura, sprite, muzzle, label, shieldBar);
+  group.userData = { label, muzzle, type: "boss", sprite, aura, shieldBar, visualState: "idle", visualTimer: 0 };
   return group;
 }
 
@@ -457,10 +482,33 @@ function currentWeapon() {
   return weapons[state.weaponIndex] ?? weapons[0];
 }
 
+function currentBossType() {
+  return state.currentLevelData?.bossType;
+}
+
+function setBossVisualState(visualState, duration = 0.16) {
+  const bossType = currentBossType();
+  if (!bossType || !boss.userData.sprite) return;
+  boss.userData.visualState = visualState;
+  boss.userData.visualTimer = Math.max(boss.userData.visualTimer ?? 0, duration);
+  const alternateState = visualState === "attack" || visualState === "enrage" || visualState === "shield" || visualState === "death";
+  const regionName = alternateState ? bossType.attackSprite ?? bossType.sprite : bossType.sprite;
+  boss.userData.sprite.material.map = makeAtlasMaterial(regionName).map;
+  boss.userData.sprite.material.color.setHex(alternateState ? bossType.attackTint ?? bossType.tint : bossType.tint);
+}
+
+function restoreBossIdleVisual() {
+  const bossType = currentBossType();
+  if (!bossType || !boss.userData.sprite) return;
+  boss.userData.visualState = state.bossEnraged ? "enrageIdle" : "idle";
+  boss.userData.sprite.material.map = makeAtlasMaterial(bossType.sprite).map;
+  boss.userData.sprite.material.color.setHex(state.bossEnraged ? bossType.attackTint ?? bossType.tint : bossType.tint);
+}
+
 function applyOperation(count, op) {
   if (op.type === "add") return count + op.value;
   if (op.type === "subtract") return Math.max(0, count - op.value);
-  if (op.type === "multiply") return count * op.value;
+  if (op.type === "multiply") return Math.floor(count * op.value);
   if (op.type === "divide") return Math.max(0, Math.floor(count / op.value));
   return count;
 }
@@ -488,6 +536,8 @@ function damagePlayer(amount) {
   setHealth(state.health - amount);
   state.invulnerableTimer = 0.22;
   state.shakeTimer = Math.max(state.shakeTimer, 0.16);
+  playSound("playerHit", { cooldown: 0.12 });
+  if (state.health <= state.maxHealth * 0.25) playSound("lowAmmo", { cooldown: 0.8 });
   showToast(`-${amount} HP`);
   squadMembers.forEach((member) => member.userData.controller.setState("hit", { lockFor: 0.18, restart: true }));
   if (state.health <= 0) {
@@ -497,9 +547,11 @@ function damagePlayer(amount) {
 }
 
 function setWeapon(index) {
+  const previous = state.weaponIndex;
   state.weaponIndex = THREE.MathUtils.clamp(index, 0, weapons.length - 1);
   weaponEl.textContent = currentWeapon().name;
   if (squadTierLabel) updateHpLabel(squadTierLabel, state.weaponIndex + 1);
+  if (state.weaponIndex > previous) playSound("weapon", { pitch: 1 + state.weaponIndex * 0.12, cooldown: 0.12 });
 }
 
 function makeGate(x, z, op, width = 2.55) {
@@ -770,8 +822,10 @@ function resetRun(nextLevel = false) {
   state.playerZ = 0;
   state.distance = 0;
   state.fireCooldown = 0;
-  state.bossAttackTimer = 1.2;
+  state.bossAttackTimer = 0.22;
   state.bossWindupTimer = 0;
+  state.bossAttackIndex = 0;
+  state.bossEnraged = false;
   state.failReason = "";
   state.invulnerableTimer = 0;
   state.maxHealth = 100 + Math.min(40, Math.floor((state.level - 1) * 4));
@@ -782,6 +836,8 @@ function resetRun(nextLevel = false) {
   const levelData = generateLevel(state.level, { finishZ });
   state.maxBossHp = levelData.bossHp;
   state.bossHp = state.maxBossHp;
+  state.maxBossShieldHp = Math.round(state.maxBossHp * (levelData.bossType.shieldHp ?? 0));
+  state.bossShieldHp = state.maxBossShieldHp;
   levelEl.textContent = state.level;
   coinsEl.textContent = state.coins;
   bossPanel.style.display = "none";
@@ -794,8 +850,16 @@ function resetRun(nextLevel = false) {
     bossSprite.material.color.setHex(levelData.bossType.tint);
     bossSprite.scale.set(levelData.bossType.sprite === "boss" ? 3.8 : 3.2, levelData.bossType.sprite === "boss" ? 4.95 : 4.15, 1);
   }
+  boss.userData.visualTimer = 0;
+  boss.userData.visualState = "idle";
+  if (boss.userData.aura) {
+    boss.userData.aura.material.color.setHex(levelData.bossType.projectileColor);
+    boss.userData.aura.material.opacity = 0.24;
+  }
+  bossShieldBar = boss.userData.shieldBar;
   boss.scale.setScalar(1 + Math.min(0.85, state.level * 0.055));
   updateHpLabel(boss.userData.label, state.bossHp);
+  updateShieldBar(bossShieldBar, state.bossShieldHp, state.maxBossShieldHp);
   buildLevel(levelData);
   setAmmo(levelData.startAmmo);
   syncSquadModels();
@@ -809,6 +873,10 @@ function showToast(text) {
 }
 
 function startRun() {
+  initAudio();
+  playSound("start", { cooldown: 0.2 });
+  startLoop("run");
+  stopLoop("boss");
   menu.classList.add("hidden");
   resetRun(false);
   state.phase = "running";
@@ -817,6 +885,9 @@ function startRun() {
 function finishRun(won) {
   if (state.phase === "result") return;
   state.phase = "result";
+  stopLoop("run");
+  stopLoop("boss");
+  playSound(won ? "victory" : "defeat", { cooldown: 0.4 });
   result.classList.remove("hidden");
   resultTitle.textContent = won ? "Victory" : state.failReason || "Out of Ammo";
   const reward = won ? Math.max(60, Math.floor(state.ammo * 0.35 + state.level * 38)) : Math.max(12, state.coins * 0.02 + state.level * 8);
@@ -837,6 +908,7 @@ function resolveGate(gate) {
   const after = applyOperation(before, gate.userData.op);
   const delta = after - before;
   setAmmo(after);
+  playSound(delta >= 0 ? "gateGood" : "gateBad", { pitch: delta >= 0 ? 1.05 : 0.86, cooldown: 0.1 });
   showToast(`${opLabel(gate.userData.op)} ${delta >= 0 ? "+" : ""}${delta}`);
   gate.scale.set(1.05, 1.08, 1.05);
 }
@@ -845,6 +917,7 @@ function resolveObstacle(obstacle) {
   obstacle.userData.hit = true;
   const loss = Math.max(6, Math.ceil(state.ammo * 0.08));
   setAmmo(state.ammo - loss);
+  playSound("gateBad", { cooldown: 0.12 });
   showToast(`Ammo leak -${loss}`);
   obstacle.scale.set(1.25, 0.65, 1.25);
 }
@@ -852,6 +925,7 @@ function resolveObstacle(obstacle) {
 function collectCoin(coin) {
   coin.userData.hit = true;
   coin.visible = false;
+  playSound("coin", { cooldown: 0.035 });
   state.coins += 1;
   coinsEl.textContent = state.coins;
 }
@@ -878,6 +952,7 @@ function collectRewardPickup(pickup) {
   pickup.visible = false;
   const { weaponIndex } = pickup.userData;
   setWeapon(Math.max(state.weaponIndex, weaponIndex));
+  playSound("weapon", { pitch: 1 + weaponIndex * 0.16, cooldown: 0.12 });
   showToast(`${currentWeapon().name} unlocked`);
   const burst = new THREE.Mesh(
     new THREE.RingGeometry(0.45, 0.68, 48),
@@ -898,6 +973,7 @@ function unlockRewardIfReady(rewardId) {
     .forEach((pickup) => {
       pickup.userData.locked = false;
       pickup.visible = true;
+      playSound("gateBreak", { cooldown: 0.12 });
       const glow = new THREE.Mesh(
         new THREE.RingGeometry(0.55, 0.95, 48),
         new THREE.MeshBasicMaterial({ color: 0x73e8ff, transparent: true, opacity: 0.85, depthWrite: false }),
@@ -914,6 +990,7 @@ function spawnProjectile(target, weapon) {
   const member = squadMembers[Math.floor(Math.random() * squadMembers.length)];
   member.userData.flash.visible = true;
   member.userData.flashTimer = 0.08;
+  playWeaponSound(weapon.id);
   const start = reusableVectors.one;
   const targetPos = reusableVectors.two;
   member.userData.muzzle.getWorldPosition(start);
@@ -929,18 +1006,20 @@ function spawnProjectile(target, weapon) {
     damage: weapon.damage,
     speed: 46 + weapon.cost * 2,
     spent: weapon.cost,
+    weaponId: weapon.id,
     alive: true,
   };
   projectileGroup.add(projectile);
   projectiles.push(projectile);
   if (weapon.id === "cannon" || weapon.id === "laser") state.shakeTimer = Math.max(state.shakeTimer, 0.12);
+  if (state.ammo < Math.max(weapon.cost * 3, 20)) playSound("lowAmmo", { cooldown: 0.9 });
 }
 
-function spawnEnemyProjectile(enemy) {
+function spawnEnemyProjectile(enemy, offsetX = 0, speedBonus = 0, damageBonus = 0) {
   const start = reusableVectors.one;
   enemy.userData.muzzle.getWorldPosition(start);
   const targetPos = new THREE.Vector3(
-    squadGroup.position.x + (Math.random() - 0.5) * 1.2,
+    squadGroup.position.x + offsetX + (Math.random() - 0.5) * 0.55,
     0.72,
     squadGroup.position.z + 0.45,
   );
@@ -948,10 +1027,10 @@ function spawnEnemyProjectile(enemy) {
   projectile.material.color.setHex(enemy.userData.type === "heavy" ? 0xff5cff : enemy.userData.type === "drone" ? 0x73e8ff : enemy.userData.type === "turret" ? 0xa7ff4f : 0xff6a3d);
   projectile.position.copy(start);
   const direction = targetPos.sub(start).normalize();
-  const speed = enemy.userData.type === "heavy" ? 28 : enemy.userData.type === "drone" ? 48 : enemy.userData.type === "turret" ? 38 : 35;
+  const speed = (enemy.userData.type === "heavy" ? 28 : enemy.userData.type === "drone" ? 48 : enemy.userData.type === "turret" ? 38 : 35) + speedBonus;
   projectile.userData = {
     hostile: true,
-    damage: enemy.userData.shotCost,
+    damage: enemy.userData.shotCost + damageBonus,
     velocity: direction.multiplyScalar(speed),
     radius: enemy.userData.type === "heavy" ? 0.7 : 0.48,
     ttl: 2.4,
@@ -959,6 +1038,7 @@ function spawnEnemyProjectile(enemy) {
   };
   projectileGroup.add(projectile);
   projectiles.push(projectile);
+  playSound("enemyShot", { pitch: enemy.userData.type === "drone" ? 1.25 : enemy.userData.type === "heavy" ? 0.72 : 1, cooldown: 0.04 });
 }
 
 function spawnEnemyTelegraph(enemy) {
@@ -1008,6 +1088,20 @@ function spawnBossProjectile(pattern = "single", offsetX = 0, damage = 12, speed
   };
   projectileGroup.add(projectile);
   projectiles.push(projectile);
+  playSound("bossShot", { pitch: pattern === "barrage" ? 1.18 : pattern === "wall" ? 0.7 : 1, cooldown: 0.035 });
+}
+
+function spawnBossTelegraph(offsetX = 0, width = 0.14) {
+  const color = currentBossType()?.projectileColor ?? 0xff4bd8;
+  const beam = new THREE.Mesh(
+    new THREE.BoxGeometry(width, 0.045, 8.5),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.62, depthWrite: false }),
+  );
+  beam.position.set((squadGroup.position.x + offsetX) * 0.5, 0.78, bossZ + 4.2);
+  beam.rotation.y = Math.atan2(squadGroup.position.x + offsetX - boss.position.x, squadGroup.position.z - boss.position.z);
+  beam.userData = { effect: true, ttl: 0.14 };
+  projectileGroup.add(beam);
+  projectiles.push(beam);
 }
 
 function findTarget() {
@@ -1075,13 +1169,25 @@ function updateEnemyShooting(dt) {
       enemy.userData.warning.material.opacity = 0.28 + Math.sin(performance.now() * 0.04) * 0.2;
       if (enemy.userData.shootWindup <= 0) {
         enemy.userData.warning.material.opacity = 0;
-        spawnEnemyProjectile(enemy);
+        if (enemy.userData.type === "turret") {
+          [-0.55, 0, 0.55].forEach((offset) => spawnEnemyProjectile(enemy, offset, 3, 0));
+        } else if (enemy.userData.type === "heavy") {
+          spawnEnemyProjectile(enemy, 0, 1, 2);
+          spawnEnemyProjectile(enemy, -0.75, -2, 0);
+          spawnEnemyProjectile(enemy, 0.75, -2, 0);
+        } else if (enemy.userData.type === "drone") {
+          spawnEnemyProjectile(enemy, -0.42, 5, 0);
+          spawnEnemyProjectile(enemy, 0.42, 5, 0);
+        } else {
+          spawnEnemyProjectile(enemy);
+        }
       }
       return;
     }
     enemy.userData.shootCooldown -= dt;
     if (enemy.userData.shootCooldown <= 0) {
       enemy.userData.shootWindup = enemy.userData.type === "heavy" ? 0.28 : enemy.userData.type === "turret" ? 0.12 : 0.18;
+      playSound("enemyWindup", { pitch: enemy.userData.type === "heavy" ? 0.75 : enemy.userData.type === "drone" ? 1.25 : 1, cooldown: 0.08 });
       spawnEnemyTelegraph(enemy);
       enemy.userData.shootCooldown = enemy.userData.shootEvery;
     }
@@ -1090,25 +1196,78 @@ function updateEnemyShooting(dt) {
 
 function updateBossAttacks(dt) {
   if (state.phase !== "boss" || state.bossHp <= 0) return;
+  const bossType = currentBossType();
+  if (!bossType) return;
+  const hpRatio = state.bossHp / state.maxBossHp;
+  if (!state.bossEnraged && hpRatio <= (bossType.enrageAt ?? 0.42)) {
+    state.bossEnraged = true;
+    state.bossAttackTimer = 0.08;
+    state.shakeTimer = Math.max(state.shakeTimer, 0.45);
+    setBossVisualState("enrage", 0.65);
+    playSound("bossEnrage", { cooldown: 0.6 });
+    showToast("Boss Enraged");
+  }
+  if (state.bossShieldHp > 0 && bossType.shieldRegen && state.bossWindupTimer <= 0) {
+    state.bossShieldHp = Math.min(state.maxBossShieldHp, state.bossShieldHp + bossType.shieldRegen * dt);
+    updateShieldBar(bossShieldBar, state.bossShieldHp, state.maxBossShieldHp);
+  }
   state.bossWindupTimer = Math.max(0, state.bossWindupTimer - dt);
   state.bossAttackTimer -= dt;
   if (state.bossAttackTimer > 0) return;
 
   const level = state.level;
-  const patternRoll = (level + Math.floor(performance.now() * 0.001)) % 3;
-  const damage = 9 + Math.min(10, Math.floor(level * 1.2));
-  if (patternRoll === 0) {
-    spawnBossProjectile("single", 0, damage + 2, 31, 0.62);
-  } else if (patternRoll === 1) {
-    spawnBossProjectile("spread", -1.15, damage, 29, 0.54);
-    spawnBossProjectile("spread", 1.15, damage, 29, 0.54);
+  const patterns = bossType.patterns ?? ["turret", "fan"];
+  const pattern = patterns[state.bossAttackIndex % patterns.length];
+  state.bossAttackIndex += 1;
+  const enraged = state.bossEnraged;
+  const damage = bossType.damage + Math.min(12, Math.floor(level * 1.15)) + (enraged ? 3 : 0);
+  const speed = bossType.projectileSpeed + (enraged ? 8 : 0);
+  const burstCount = bossType.burstCount + Number(enraged);
+  const playerBias = THREE.MathUtils.clamp(squadGroup.position.x, -2.6, 2.6);
+  setBossVisualState("attack", 0.18);
+
+  if (pattern === "turret") {
+    for (let i = 0; i < burstCount; i += 1) {
+      const offset = playerBias + (i - (burstCount - 1) / 2) * 0.38;
+      spawnBossTelegraph(offset, 0.1);
+      spawnBossProjectile("turret", offset, damage, speed + i * 1.2, 0.45);
+    }
+  } else if (pattern === "fan") {
+    const offsets = enraged ? [-2.9, -1.65, -0.55, 0.55, 1.65, 2.9] : [-2.25, -1.05, 0, 1.05, 2.25];
+    offsets.forEach((offset) => {
+      spawnBossTelegraph(offset, 0.12);
+      spawnBossProjectile("fan", offset, Math.max(7, damage - 2), speed - 3, 0.5);
+    });
+  } else if (pattern === "sweep") {
+    const direction = state.bossAttackIndex % 2 === 0 ? 1 : -1;
+    [-2.8, -1.8, -0.8, 0.2, 1.2, 2.2].forEach((offset, i) => {
+      const laneOffset = offset * direction;
+      spawnBossTelegraph(laneOffset, 0.16);
+      spawnBossProjectile("sweep", laneOffset, damage, speed + i * 0.8, 0.5);
+    });
+  } else if (pattern === "wall") {
+    [-2.7, -1.35, 0, 1.35, 2.7].forEach((offset) => {
+      spawnBossTelegraph(offset, 0.2);
+      spawnBossProjectile("wall", offset, damage + 2, speed - 6, 0.68);
+    });
+  } else if (pattern === "shieldBurst") {
+    if (state.bossShieldHp <= 0) state.bossShieldHp = Math.min(state.maxBossShieldHp, state.maxBossShieldHp * 0.22);
+    updateShieldBar(bossShieldBar, state.bossShieldHp, state.maxBossShieldHp);
+    [-2.2, 0, 2.2].forEach((offset) => {
+      spawnBossTelegraph(offset, 0.22);
+      spawnBossProjectile("shieldBurst", offset, damage + 4, speed - 2, 0.7);
+    });
   } else {
-    spawnBossProjectile("fan", -1.85, Math.max(6, damage - 2), 27, 0.46);
-    spawnBossProjectile("fan", 0, damage, 30, 0.52);
-    spawnBossProjectile("fan", 1.85, Math.max(6, damage - 2), 27, 0.46);
+    for (let i = 0; i < burstCount + 2; i += 1) {
+      const offset = -2.8 + Math.random() * 5.6;
+      spawnBossTelegraph(offset, 0.11);
+      spawnBossProjectile("barrage", offset, Math.max(6, damage - 3), speed + Math.random() * 7, 0.42);
+    }
   }
-  state.shakeTimer = Math.max(state.shakeTimer, 0.09);
-  state.bossAttackTimer = Math.max(0.72, 1.32 - Math.min(0.34, level * 0.025));
+
+  state.bossWindupTimer = 0.18;
+  state.shakeTimer = Math.max(state.shakeTimer, enraged ? 0.18 : 0.11);
+  state.bossAttackTimer = Math.max(0.2, (enraged ? bossType.enrageRate : bossType.attackRate) - Math.min(0.08, level * 0.006));
 }
 
 function damageEnemy(enemy, amount) {
@@ -1116,6 +1275,7 @@ function damageEnemy(enemy, amount) {
   enemy.userData.flash = 0.16;
   updateHpLabel(enemy.userData.label, enemy.userData.hp);
   if (enemy.userData.hp <= 0) {
+    playSound("enemyDeath", { cooldown: 0.05 });
     enemy.userData.hit = true;
     enemy.userData.active = false;
     const boom = makeAtlasSprite("explosion", enemy.userData.type === "heavy" ? 2.4 : 1.65, enemy.userData.type === "heavy" ? 1.8 : 1.25);
@@ -1133,6 +1293,7 @@ function damageDecrementGate(gate, amount) {
   if (!gate.userData.active) return;
   gate.userData.hp = Math.max(0, gate.userData.hp - amount);
   gate.userData.flash = 0.13;
+  playSound("gateHit", { intensity: amount / 10, cooldown: 0.045 });
   updateHpLabel(gate.userData.label, gate.userData.hp);
   const ratio = gate.userData.hp / gate.userData.maxHp;
   gate.userData.panel.material.opacity = 0.48 + ratio * 0.34;
@@ -1141,6 +1302,7 @@ function damageDecrementGate(gate, amount) {
     gate.userData.hit = true;
     gate.userData.active = false;
     gate.visible = false;
+    playSound("gateBreak", { cooldown: 0.12 });
     const shatter = makeAtlasSprite("explosion", 1.9, 1.35);
     shatter.material.color.setHex(0x73e8ff);
     shatter.position.set(gate.position.x, 1.25, gate.position.z);
@@ -1151,9 +1313,32 @@ function damageDecrementGate(gate, amount) {
   }
 }
 
-function damageBoss(amount) {
-  state.bossHp = Math.max(0, state.bossHp - amount);
+function damageBoss(amount, projectile = null) {
+  const bossType = currentBossType();
+  let remainingDamage = amount;
+  if (state.bossShieldHp > 0) {
+    const shieldMultiplier = projectile?.userData.weaponId === "carbine" ? 0.62 : projectile?.userData.weaponId === "rifle" ? 0.82 : 1.18;
+    const shieldDamage = Math.min(state.bossShieldHp, remainingDamage * shieldMultiplier);
+    state.bossShieldHp = Math.max(0, state.bossShieldHp - shieldDamage);
+    remainingDamage = Math.max(0, remainingDamage - shieldDamage * 0.45);
+    updateShieldBar(bossShieldBar, state.bossShieldHp, state.maxBossShieldHp);
+    setBossVisualState("shield", 0.12);
+    if (state.bossShieldHp <= 0 && state.maxBossShieldHp > 0) {
+      state.shakeTimer = Math.max(state.shakeTimer, 0.34);
+      playSound("bossShieldBreak", { cooldown: 0.5 });
+      showToast(`${bossType?.name ?? "Boss"} Shield Broken`);
+      const burst = makeAtlasSprite("explosion", 3.2, 2.2);
+      burst.material.color.setHex(0x73e8ff);
+      burst.position.set(boss.position.x, 2.2, boss.position.z + 0.4);
+      burst.userData = { effect: true, ttl: 0.48 };
+      projectileGroup.add(burst);
+      projectiles.push(burst);
+    }
+  }
+  state.bossHp = Math.max(0, state.bossHp - remainingDamage);
   state.hitFlashTimer = 0.14;
+  if (state.bossShieldHp > 0) playSound("bossShield", { cooldown: 0.07 });
+  setBossVisualState("hit", 0.11);
   bossFill.style.width = `${(state.bossHp / state.maxBossHp) * 100}%`;
   updateHpLabel(boss.userData.label, state.bossHp);
 }
@@ -1212,7 +1397,7 @@ function updateProjectiles(dt) {
 
     if (distance < 0.55) {
       if (target === boss) {
-        damageBoss(projectile.userData.damage);
+        damageBoss(projectile.userData.damage, projectile);
       } else if (target.userData.type === "decrementGate") {
         damageDecrementGate(target, projectile.userData.damage);
       } else {
@@ -1308,7 +1493,12 @@ function updateRunning(dt) {
 
   if (state.playerZ <= finishZ) {
     state.phase = "boss";
+    state.bossAttackTimer = 0.16;
+    state.bossWindupTimer = 0.12;
     bossPanel.style.display = "flex";
+    stopLoop("run");
+    startLoop("boss");
+    playSound("bossIntro", { cooldown: 0.5 });
     showToast("Boss Fight");
   }
 }
@@ -1324,12 +1514,22 @@ function updateBossFight(dt) {
   camera.lookAt(0, 1.2, bossZ - 2);
   squadGroup.position.z = THREE.MathUtils.lerp(squadGroup.position.z, bossZ + 5.2, 0.04);
   squadGroup.position.x = THREE.MathUtils.lerp(squadGroup.position.x, 0, 0.05);
-  boss.rotation.y += dt * 0.75;
-  boss.position.y = Math.sin(performance.now() * 0.006) * 0.06;
+  const bossType = currentBossType();
+  const t = performance.now() * 0.001;
+  boss.rotation.y += dt * (state.bossEnraged ? 1.25 : 0.75);
+  boss.position.y = Math.sin(t * (state.bossEnraged ? 9 : 6)) * (state.bossEnraged ? 0.12 : 0.06);
+  if (bossType?.id === "hoverMech") {
+    boss.position.x = Math.sin(t * 2.4) * 1.65;
+  } else if (bossType?.id === "cyberBeast") {
+    boss.position.x = Math.sin(t * 5.2) * 0.82 + Math.sin(t * 2.1) * 0.45;
+  } else {
+    boss.position.x = THREE.MathUtils.lerp(boss.position.x, 0, 0.04);
+  }
 
   updateBossAttacks(dt);
   shootAtTarget(dt);
   if (state.bossHp <= 0) {
+    setBossVisualState("death", 0.5);
     boss.scale.setScalar(Math.max(0.1, boss.scale.x - dt * 2.5));
     if (boss.scale.x <= 0.14) finishRun(true);
   } else if (state.ammo <= 0 && projectiles.length === 0) {
@@ -1389,6 +1589,15 @@ function updateWorld(dt) {
   });
 
   boss.userData.label.quaternion.copy(camera.quaternion);
+  if (boss.userData.shieldBar) boss.userData.shieldBar.quaternion.copy(camera.quaternion);
+  if (boss.userData.aura) {
+    boss.userData.aura.material.opacity = (state.bossEnraged ? 0.44 : 0.24) + Math.sin(performance.now() * 0.01) * 0.08;
+    boss.userData.aura.scale.setScalar(state.bossEnraged ? 1.18 : 1);
+  }
+  if (boss.userData.visualTimer > 0) {
+    boss.userData.visualTimer -= dt;
+    if (boss.userData.visualTimer <= 0 && state.bossHp > 0) restoreBossIdleVisual();
+  }
   if (squadAmmoLabel) squadAmmoLabel.quaternion.copy(camera.quaternion);
   if (squadTierLabel) squadTierLabel.quaternion.copy(camera.quaternion);
   if (state.hitFlashTimer > 0) {
@@ -1491,8 +1700,20 @@ function onKey(event) {
 
 startButton.addEventListener("click", startRun);
 restartButton.addEventListener("click", () => {
+  initAudio();
+  playSound("start", { cooldown: 0.2 });
+  startLoop("run");
+  stopLoop("boss");
   resetRun(restartButton.dataset.next === "true");
   state.phase = "running";
+});
+audioToggle.addEventListener("click", () => {
+  initAudio();
+  const enabled = !isAudioEnabled();
+  setAudioEnabled(enabled);
+  audioToggle.textContent = enabled ? "Sound On" : "Sound Off";
+  audioToggle.setAttribute("aria-pressed", `${enabled}`);
+  playSound("ui", { cooldown: 0.1 });
 });
 window.addEventListener("resize", resize);
 window.addEventListener("pointerdown", onPointerDown);
