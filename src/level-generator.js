@@ -280,11 +280,21 @@ function ammoCostForHp(hp, weaponIndex) {
   return Math.ceil(hp / weapon.damage) * weapon.cost;
 }
 
-function scaleVaultGateHp(baseHp, rewardWeapon, { hard, gateIndex }) {
-  const weaponGateScale = [1, 1.05, 1.35, 1.85, 2.45][rewardWeapon] ?? 2.45;
-  const tierPremium = Math.max(0, rewardWeapon - 1) * (7 + hard * 1.35);
-  const innerLockPremium = gateIndex * Math.max(1, rewardWeapon - 1) * (2.2 + hard * 0.18);
-  return Math.round(baseHp * weaponGateScale + tierPremium + innerLockPremium);
+function maxHealthForLevel(level) {
+  return 100 + Math.min(40, Math.floor((level - 1) * 4));
+}
+
+function scaleVaultGateHp(baseHp, reward, { hard, gateIndex, sectionIndex, currentWeaponIndex }) {
+  const currentWeapon = WEAPONS[Math.max(0, Math.min(currentWeaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
+  const isHealthReward = reward.type === "health";
+  const rewardWeaponIndex = reward.weaponIndex ?? currentWeaponIndex;
+  const tierGap = Math.max(0, rewardWeaponIndex - currentWeaponIndex);
+  const sectionShots = Math.min(isHealthReward ? 1.2 : 2.4, sectionIndex * (isHealthReward ? 0.08 : 0.1));
+  const levelShots = Math.min(isHealthReward ? 0.9 : 1.8, hard * (isHealthReward ? 0.06 : 0.08));
+  const targetShots = isHealthReward
+    ? 2.4 + gateIndex * 0.65 + sectionShots + levelShots
+    : 3.6 + rewardWeaponIndex * 0.9 + tierGap * 0.75 + gateIndex * 0.85 + sectionShots + levelShots;
+  return Math.round(currentWeapon.damage * targetShots);
 }
 
 function ammoCostForBoss(bossType, bossHp, weaponIndex) {
@@ -329,7 +339,7 @@ export function analyzeLevelSolvability(levelData) {
 
     const reward = levelData.rewardPickups.find((pickup) => pickup.id === section.decrementGates?.[0]?.rewardId);
     let vaultCost = 0;
-    if (reward && reward.weaponIndex > weaponIndex) {
+    if (reward?.type === "weapon" && reward.weaponIndex > weaponIndex) {
       vaultCost = section.decrementGates.reduce((sum, gate) => sum + ammoCostForHp(gate.hp, weaponIndex), 0);
       const futureBossSavings = ammoCostForBoss(levelData.bossType, levelData.bossHp, weaponIndex) - ammoCostForBoss(levelData.bossType, levelData.bossHp, reward.weaponIndex);
       if (ammo - vaultCost > WEAPONS[reward.weaponIndex].cost && futureBossSavings > vaultCost * 0.35) {
@@ -375,6 +385,9 @@ function buildLevelCandidate(level, { finishZ, runSeed, attempt }) {
   const obstacles = [];
   const vaultWeaponProgression = level < 3 ? [1, 2, 2, 3] : level < 6 ? [1, 2, 3, 3, 4] : [1, 2, 3, 4, 4, 4];
   let vaultIndex = 0;
+  let expectedWeaponIndex = 0;
+  let healthVaultUsed = false;
+  let previousVaultWasHealth = false;
   const recentTemplates = [];
 
   for (let i = 0; i < sections; i += 1) {
@@ -417,15 +430,28 @@ function buildLevelCandidate(level, { finishZ, runSeed, attempt }) {
       const enemyLane = rewardLane < 0 ? LANE_X[2] : LANE_X[0];
       const gateCount = 2 + Number(i > 6) + Number(i > 13 && level > 3);
       const rewardWeapon = vaultWeaponProgression[Math.min(vaultIndex, vaultWeaponProgression.length - 1)];
+      const makeHealthVault = level > 1 && vaultIndex >= 2 && !healthVaultUsed && !previousVaultWasHealth && random() < 0.2;
+      const reward = makeHealthVault
+        ? {
+            type: "health",
+            amount: Math.ceil(maxHealthForLevel(level) * 0.35),
+            weaponIndex: expectedWeaponIndex,
+          }
+        : {
+            type: "weapon",
+            amount: 0,
+            weaponIndex: rewardWeapon,
+          };
       vaultIndex += 1;
       for (let g = 0; g < gateCount; g += 1) {
         const baseHp = 14 + hard * 4.4 + i * 2.1 + g * (5 + hard * 0.55);
-        const hp = scaleVaultGateHp(baseHp, rewardWeapon, { hard, gateIndex: g });
+        const hp = scaleVaultGateHp(baseHp, reward, { hard, gateIndex: g, sectionIndex: i, currentWeaponIndex: expectedWeaponIndex });
         sectionsOut[sectionsOut.length - 1].decrementGates.push({
           x: rewardLane,
           z: z - spacing * (0.22 + g * 0.14),
           hp,
-          rewardWeaponIndex: rewardWeapon,
+          rewardType: reward.type,
+          rewardWeaponIndex: reward.weaponIndex,
           rewardId: `s${i}`,
           index: g,
           total: gateCount,
@@ -435,10 +461,13 @@ function buildLevelCandidate(level, { finishZ, runSeed, attempt }) {
         id: `s${i}`,
         x: rewardLane,
         z: z - spacing * (0.22 + gateCount * 0.14 + 0.08),
-        type: "weapon",
-        amount: 0,
-        weaponIndex: rewardWeapon,
+        type: reward.type,
+        amount: reward.amount,
+        weaponIndex: reward.weaponIndex,
       });
+      if (reward.type === "weapon") expectedWeaponIndex = Math.max(expectedWeaponIndex, reward.weaponIndex);
+      if (reward.type === "health") healthVaultUsed = true;
+      previousVaultWasHealth = reward.type === "health";
       if (i > 3) {
         const type = typePool[(i + level) % typePool.length];
         sectionsOut[sectionsOut.length - 1].enemies.push({

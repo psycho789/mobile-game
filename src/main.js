@@ -700,26 +700,37 @@ function makeWeaponPickup(x, z, weaponIndex) {
 function makeRewardPickup({ id, x, z, type, amount = 0, weaponIndex = 1 }) {
   const weapon = weapons[weaponIndex] ?? weapons[1];
   const pickup = new THREE.Group();
-  const color = weapon.color;
+  const isHealth = type === "health";
+  const color = isHealth ? 0x38d878 : weapon.color;
   const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.76, 0.94, 0.22, 6),
+    isHealth ? new THREE.CylinderGeometry(0.78, 0.96, 0.22, 18) : new THREE.CylinderGeometry(0.76, 0.94, 0.22, 6),
     new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.32, roughness: 0.3 }),
   );
   base.position.y = 0.18;
   const core = new THREE.Mesh(
-    new THREE.BoxGeometry(1.05, 0.55, 0.52),
-    materials.weapon,
+    isHealth ? new THREE.BoxGeometry(0.92, 0.62, 0.58) : new THREE.BoxGeometry(1.05, 0.55, 0.52),
+    isHealth ? new THREE.MeshStandardMaterial({ color: 0xf7fbff, roughness: 0.32 }) : materials.weapon,
   );
   core.position.y = 0.7;
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.96), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 }));
-  barrel.position.set(0.42, 0.72, -0.36);
-  const labelText = weapon.name.replace("Pulse ", "");
+  if (isHealth) {
+    const crossMat = new THREE.MeshStandardMaterial({ color: 0xff4a6a, emissive: 0xff4a6a, emissiveIntensity: 0.28, roughness: 0.28 });
+    const crossA = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.14, 0.08), crossMat);
+    const crossB = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.62, 0.08), crossMat);
+    crossA.position.set(0, 0.73, -0.32);
+    crossB.position.set(0, 0.73, -0.33);
+    pickup.add(crossA, crossB);
+  } else {
+    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.96), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 }));
+    barrel.position.set(0.42, 0.72, -0.36);
+    pickup.add(barrel);
+  }
+  const labelText = isHealth ? `+${amount} HP` : weapon.name.replace("Pulse ", "");
   const label = makeTextSprite(labelText, 0.42);
   label.position.set(0, 1.28, 0);
-  pickup.add(base, core, barrel, label);
+  pickup.add(base, core, label);
   pickup.position.set(x, 0, z);
   pickup.visible = false;
-  pickup.userData = { id, hit: false, locked: true, type: "weapon", amount, weaponIndex, label };
+  pickup.userData = { id, hit: false, locked: true, type, amount, weaponIndex, label };
   levelGroup.add(pickup);
   rewardPickups.push(pickup);
 }
@@ -870,6 +881,7 @@ function syncSquadModels() {
 }
 
 function resetRun(nextLevel = false) {
+  const carriedHealth = state.health;
   if (nextLevel) state.level += 1;
   state.runSeed = Math.floor(Math.random() * 4294967296) >>> 0;
   state.speed = 12.8;
@@ -888,7 +900,7 @@ function resetRun(nextLevel = false) {
   state.failReason = "";
   state.invulnerableTimer = 0;
   state.maxHealth = 100 + Math.min(40, Math.floor((state.level - 1) * 4));
-  setHealth(state.maxHealth);
+  setHealth(nextLevel ? Math.min(carriedHealth, state.maxHealth) : state.maxHealth);
   setWeapon(0);
   state.toastTimer = 0;
   state.hitFlashTimer = 0;
@@ -1010,13 +1022,24 @@ function collectWeaponPickup(pickup) {
 function collectRewardPickup(pickup) {
   pickup.userData.hit = true;
   pickup.visible = false;
-  const { weaponIndex } = pickup.userData;
-  setWeapon(Math.max(state.weaponIndex, weaponIndex));
-  playSound("weapon", { pitch: 1 + weaponIndex * 0.16, cooldown: 0.12 });
-  showToast(`${currentWeapon().name} unlocked`);
+  const { amount, type, weaponIndex } = pickup.userData;
+  let burstColor = currentWeapon().color;
+  if (type === "health") {
+    const before = state.health;
+    setHealth(state.health + amount);
+    const restored = state.health - before;
+    burstColor = 0x38d878;
+    playSound(restored > 0 ? "gateGood" : "coin", { pitch: 1.18, cooldown: 0.12 });
+    showToast(restored > 0 ? `+${restored} HP` : "Health Full");
+  } else {
+    setWeapon(Math.max(state.weaponIndex, weaponIndex));
+    burstColor = currentWeapon().color;
+    playSound("weapon", { pitch: 1 + weaponIndex * 0.16, cooldown: 0.12 });
+    showToast(`${currentWeapon().name} unlocked`);
+  }
   const burst = new THREE.Mesh(
     new THREE.RingGeometry(0.45, 0.68, 48),
-    new THREE.MeshBasicMaterial({ color: currentWeapon().color, transparent: true, opacity: 0.92, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: burstColor, transparent: true, opacity: 0.92, depthWrite: false }),
   );
   burst.rotation.x = -Math.PI / 2;
   burst.position.set(pickup.position.x, 0.08, pickup.position.z);
@@ -1034,9 +1057,10 @@ function unlockRewardIfReady(rewardId) {
       pickup.userData.locked = false;
       pickup.visible = true;
       playSound("gateBreak", { cooldown: 0.12 });
+      const glowColor = pickup.userData.type === "health" ? 0x38d878 : 0x73e8ff;
       const glow = new THREE.Mesh(
         new THREE.RingGeometry(0.55, 0.95, 48),
-        new THREE.MeshBasicMaterial({ color: 0x73e8ff, transparent: true, opacity: 0.85, depthWrite: false }),
+        new THREE.MeshBasicMaterial({ color: glowColor, transparent: true, opacity: 0.85, depthWrite: false }),
       );
       glow.rotation.x = -Math.PI / 2;
       glow.position.set(pickup.position.x, 0.09, pickup.position.z);
