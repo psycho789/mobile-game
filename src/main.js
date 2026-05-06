@@ -59,11 +59,16 @@ const ammoUpgradeBonus = 120;
 const healthUpgradeBonus = 15;
 const fireRateUpgradePercent = 6;
 const speedUpgradePercent = 4;
+const decrementGateShootRange = 88;
+const decrementGateDespawnGrace = 4.8;
 
 const upgradeDefinitions = [
   {
     id: "ammo",
-    name: "Ammo Pack",
+    name: "Ammo",
+    fullName: "Ammo Pack",
+    description: "+120 ammo",
+    sprite: "ammo",
     maxLevel: 8,
     baseCost: 300,
     costScale: 1.7,
@@ -71,7 +76,10 @@ const upgradeDefinitions = [
   },
   {
     id: "health",
-    name: "Armor Plating",
+    name: "Armor",
+    fullName: "Armor Plating",
+    description: "+15 HP",
+    sprite: "health",
     maxLevel: 6,
     baseCost: 450,
     costScale: 1.85,
@@ -79,7 +87,10 @@ const upgradeDefinitions = [
   },
   {
     id: "fireRate",
-    name: "Trigger Kit",
+    name: "Trigger",
+    fullName: "Trigger Kit",
+    description: "Faster",
+    sprite: "fire-rate",
     maxLevel: 5,
     baseCost: 900,
     costScale: 2.1,
@@ -87,13 +98,24 @@ const upgradeDefinitions = [
   },
   {
     id: "speed",
-    name: "Sprint Boots",
+    name: "Sprint",
+    fullName: "Sprint Boots",
+    description: "Run speed",
+    sprite: "speed",
     maxLevel: 4,
     baseCost: 700,
     costScale: 2,
     effect: `+${speedUpgradePercent}% run speed`,
   },
 ];
+
+const weaponShopSprites = {
+  carbine: "carbine",
+  rifle: "rifle",
+  cannon: "cannon",
+  laser: "laser",
+  overdrive: "overdrive",
+};
 
 const state = {
   phase: "menu",
@@ -279,7 +301,10 @@ for (let tier = 0; tier < 5; tier += 1) {
   });
 }
 
-const weapons = WEAPONS;
+const weapons = WEAPONS.map((weapon) => ({
+  ...weapon,
+  shopSprite: weaponShopSprites[weapon.id] ?? "carbine",
+}));
 
 function makeAtlasMaterial(regionName) {
   const region = atlasRegions[regionName];
@@ -382,6 +407,72 @@ function makeShadow(width = 0.9, depth = 0.45) {
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = 0.035;
   return shadow;
+}
+
+function makeWeaponMaterial(color, emissiveIntensity = 0.35) {
+  return new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity, metalness: 0.18, roughness: 0.32 });
+}
+
+function makeWeaponPart(geometry, material, position, rotation = [0, 0, 0]) {
+  const part = new THREE.Mesh(geometry, material);
+  part.position.set(...position);
+  part.rotation.set(...rotation);
+  part.castShadow = true;
+  return part;
+}
+
+function makeWeaponModel(weapon, scale = 1) {
+  const model = new THREE.Group();
+  const accent = makeWeaponMaterial(weapon.color, 0.62);
+  const hot = makeWeaponMaterial(weapon.color, 1.1);
+  const dark = new THREE.MeshStandardMaterial({ color: 0x121922, metalness: 0.28, roughness: 0.34 });
+  const trim = new THREE.MeshStandardMaterial({ color: 0xf7fbff, emissive: 0x9cf7ff, emissiveIntensity: 0.28, roughness: 0.22 });
+
+  if (weapon.id === "rifle") {
+    model.add(
+      makeWeaponPart(new THREE.BoxGeometry(1.38, 0.26, 0.34), accent, [0, 0.02, 0]),
+      makeWeaponPart(new THREE.BoxGeometry(0.92, 0.08, 0.42), trim, [0.08, 0.23, 0]),
+      makeWeaponPart(new THREE.BoxGeometry(0.32, 0.16, 0.2), dark, [-0.28, 0.39, 0]),
+      makeWeaponPart(new THREE.BoxGeometry(0.16, 0.16, 1.02), hot, [0.58, 0.02, -0.58]),
+      makeWeaponPart(new THREE.BoxGeometry(0.22, 0.34, 0.22), dark, [-0.42, -0.26, 0.08], [0.28, 0, 0]),
+    );
+  } else if (weapon.id === "cannon") {
+    model.add(
+      makeWeaponPart(new THREE.BoxGeometry(1.05, 0.46, 0.52), accent, [-0.08, 0.04, 0]),
+      makeWeaponPart(new THREE.CylinderGeometry(0.24, 0.3, 1.1, 18), hot, [0.52, 0.04, -0.5], [Math.PI / 2, 0, 0]),
+      makeWeaponPart(new THREE.CylinderGeometry(0.34, 0.28, 0.24, 18), trim, [0.52, 0.04, -1.12], [Math.PI / 2, 0, 0]),
+      makeWeaponPart(new THREE.BoxGeometry(0.44, 0.2, 0.32), dark, [-0.58, -0.28, 0.1], [0.2, 0, -0.12]),
+    );
+  } else if (weapon.id === "laser") {
+    model.add(
+      makeWeaponPart(new THREE.BoxGeometry(1.2, 0.28, 0.34), dark, [-0.06, 0.02, 0]),
+      makeWeaponPart(new THREE.BoxGeometry(0.84, 0.1, 0.46), accent, [0.08, 0.2, 0]),
+      makeWeaponPart(new THREE.CylinderGeometry(0.11, 0.11, 1.16, 14), hot, [0.48, 0.02, -0.64], [Math.PI / 2, 0, 0]),
+      makeWeaponPart(new THREE.OctahedronGeometry(0.22), trim, [0.48, 0.02, -1.25]),
+      makeWeaponPart(new THREE.BoxGeometry(0.24, 0.32, 0.22), dark, [-0.46, -0.24, 0.08], [0.28, 0, 0]),
+    );
+  } else if (weapon.id === "overdrive") {
+    model.add(
+      makeWeaponPart(new THREE.BoxGeometry(1.18, 0.38, 0.5), dark, [-0.08, 0.02, 0]),
+      makeWeaponPart(new THREE.BoxGeometry(0.74, 0.22, 0.22), accent, [0.08, 0.22, -0.14]),
+      makeWeaponPart(new THREE.CylinderGeometry(0.12, 0.16, 1.15, 14), hot, [0.46, 0.11, -0.66], [Math.PI / 2, 0, 0]),
+      makeWeaponPart(new THREE.CylinderGeometry(0.12, 0.16, 1.15, 14), hot, [0.46, -0.11, -0.66], [Math.PI / 2, 0, 0]),
+      makeWeaponPart(new THREE.SphereGeometry(0.2, 18, 10), makeWeaponMaterial(0xff4bd8, 0.9), [-0.34, 0.02, 0.1]),
+      makeWeaponPart(new THREE.BoxGeometry(0.32, 0.34, 0.26), dark, [-0.54, -0.3, 0.12], [0.18, 0, -0.16]),
+    );
+  } else {
+    model.add(
+      makeWeaponPart(new THREE.BoxGeometry(0.92, 0.22, 0.28), accent, [-0.04, 0.02, 0]),
+      makeWeaponPart(new THREE.BoxGeometry(0.16, 0.16, 0.82), hot, [0.34, 0.02, -0.48]),
+      makeWeaponPart(new THREE.BoxGeometry(0.18, 0.18, 0.2), trim, [0.34, 0.02, -0.96]),
+      makeWeaponPart(new THREE.BoxGeometry(0.24, 0.3, 0.2), dark, [-0.36, -0.24, 0.06], [0.28, 0, 0]),
+    );
+  }
+
+  model.rotation.set(-0.08, -0.42, 0.04);
+  model.scale.setScalar(scale);
+  model.userData = { baseY: 0, spin: 0.9 + weapon.cost * 0.025 };
+  return model;
 }
 
 boss = createBoss();
@@ -620,10 +711,10 @@ function getFireCooldownMultiplier() {
 
 function upgradeSummary(definition) {
   const level = state.upgrades[definition.id] ?? 0;
-  if (definition.id === "ammo") return `Current bonus +${level * ammoUpgradeBonus} ammo. Next: ${definition.effect}.`;
-  if (definition.id === "health") return `Current bonus +${level * healthUpgradeBonus} health. Next: ${definition.effect}.`;
-  if (definition.id === "fireRate") return `Current bonus -${level * fireRateUpgradePercent}% cooldown. Next: ${definition.effect}.`;
-  return `Current bonus +${level * speedUpgradePercent}% speed. Next: ${definition.effect}.`;
+  if (definition.id === "ammo") return level ? `+${level * ammoUpgradeBonus}` : definition.description;
+  if (definition.id === "health") return level ? `+${level * healthUpgradeBonus} HP` : definition.description;
+  if (definition.id === "fireRate") return level ? `-${level * fireRateUpgradePercent}% CD` : definition.description;
+  return level ? `+${level * speedUpgradePercent}% SPD` : definition.description;
 }
 
 function updateCoinDisplays() {
@@ -658,11 +749,16 @@ function renderShop() {
       const item = document.createElement("article");
       item.className = "shop-upgrade";
 
+      const icon = document.createElement("span");
+      icon.className = `shop-sprite shop-sprite-${definition.sprite}`;
+      icon.setAttribute("aria-hidden", "true");
+
       const copy = document.createElement("div");
+      copy.className = "shop-copy";
       const title = document.createElement("h3");
       title.textContent = definition.name;
       const detail = document.createElement("p");
-      detail.textContent = maxed ? `Maximum upgrade reached. ${definition.effect}.` : upgradeSummary(definition);
+      detail.textContent = maxed ? "Maxed" : upgradeSummary(definition);
       const tier = document.createElement("span");
       tier.className = "tier";
       tier.textContent = `${level}/${definition.maxLevel}`;
@@ -672,10 +768,21 @@ function renderShop() {
       button.type = "button";
       button.dataset.upgradeId = definition.id;
       button.disabled = !canBuy;
-      button.textContent = maxed ? "Maxed" : `${cost} coins`;
-      button.setAttribute("aria-label", maxed ? `${definition.name} maxed` : `Buy ${definition.name} for ${cost} coins`);
+      button.setAttribute("aria-label", maxed ? `${definition.fullName} maxed` : `Buy ${definition.fullName} for ${cost} coins`);
+      if (maxed) {
+        const maxText = document.createElement("span");
+        maxText.textContent = "MAX";
+        button.append(maxText);
+      } else {
+        const costText = document.createElement("span");
+        costText.textContent = cost;
+        const coin = document.createElement("span");
+        coin.className = "shop-sprite shop-sprite-coin";
+        coin.setAttribute("aria-hidden", "true");
+        button.append(costText, coin);
+      }
 
-      item.append(copy, button);
+      item.append(icon, copy, button);
       return item;
     }),
   );
@@ -839,19 +946,24 @@ function makeWeaponPickup(x, z, weaponIndex) {
   const weapon = weapons[weaponIndex];
   const pickup = new THREE.Group();
   const base = new THREE.Mesh(
-    new THREE.BoxGeometry(1.35, 0.18, 1.15),
+    new THREE.CylinderGeometry(0.84, 1.02, 0.2, 24),
     new THREE.MeshStandardMaterial({ color: weapon.color, emissive: weapon.color, emissiveIntensity: 0.24, roughness: 0.35 }),
   );
-  base.position.y = 0.12;
-  const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 0.62, 0.42), materials.weapon);
-  crate.position.y = 0.58;
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.86), materials.muzzle);
-  barrel.position.set(0.42, 0.63, -0.34);
+  base.position.y = 0.14;
+  const aura = new THREE.Mesh(
+    new THREE.RingGeometry(0.78, 1.08, 48),
+    new THREE.MeshBasicMaterial({ color: weapon.color, transparent: true, opacity: 0.42, depthWrite: false }),
+  );
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.28;
+  const model = makeWeaponModel(weapon, 0.78);
+  model.position.y = 0.82;
+  model.userData.baseY = model.position.y;
   const label = makeTextSprite(weapon.name.replace("Pulse ", ""), 0.42);
-  label.position.set(0, 1.2, 0);
-  pickup.add(base, crate, barrel, label);
+  label.position.set(0, 1.52, 0);
+  pickup.add(base, aura, model, label);
   pickup.position.set(x, 0, z);
-  pickup.userData = { hit: false, weaponIndex };
+  pickup.userData = { hit: false, weaponIndex, model, aura };
   levelGroup.add(pickup);
   weaponPickups.push(pickup);
 }
@@ -862,34 +974,43 @@ function makeRewardPickup({ id, x, z, type, amount = 0, weaponIndex = 1 }) {
   const isHealth = type === "health";
   const color = isHealth ? 0x38d878 : weapon.color;
   const base = new THREE.Mesh(
-    isHealth ? new THREE.CylinderGeometry(0.78, 0.96, 0.22, 18) : new THREE.CylinderGeometry(0.76, 0.94, 0.22, 6),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.32, roughness: 0.3 }),
+    isHealth ? new THREE.CylinderGeometry(0.78, 0.96, 0.22, 18) : new THREE.CylinderGeometry(0.88, 1.08, 0.22, 24),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: isHealth ? 0.32 : 0.52, roughness: 0.3 }),
   );
   base.position.y = 0.18;
-  const core = new THREE.Mesh(
-    isHealth ? new THREE.BoxGeometry(0.92, 0.62, 0.58) : new THREE.BoxGeometry(1.05, 0.55, 0.52),
-    isHealth ? new THREE.MeshStandardMaterial({ color: 0xf7fbff, roughness: 0.32 }) : materials.weapon,
-  );
-  core.position.y = 0.7;
   if (isHealth) {
+    const core = new THREE.Mesh(
+      new THREE.BoxGeometry(0.92, 0.62, 0.58),
+      new THREE.MeshStandardMaterial({ color: 0xf7fbff, roughness: 0.32 }),
+    );
+    core.position.y = 0.7;
     const crossMat = new THREE.MeshStandardMaterial({ color: 0xff4a6a, emissive: 0xff4a6a, emissiveIntensity: 0.28, roughness: 0.28 });
     const crossA = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.14, 0.08), crossMat);
     const crossB = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.62, 0.08), crossMat);
     crossA.position.set(0, 0.73, -0.32);
     crossB.position.set(0, 0.73, -0.33);
-    pickup.add(crossA, crossB);
+    pickup.add(core, crossA, crossB);
   } else {
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.96), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 }));
-    barrel.position.set(0.42, 0.72, -0.36);
-    pickup.add(barrel);
+    const aura = new THREE.Mesh(
+      new THREE.RingGeometry(0.72, 1.15, 56),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.58, depthWrite: false }),
+    );
+    aura.rotation.x = -Math.PI / 2;
+    aura.position.y = 0.32;
+    const model = makeWeaponModel(weapon, 0.86);
+    model.position.y = 0.88;
+    model.userData.baseY = model.position.y;
+    pickup.userData.model = model;
+    pickup.userData.aura = aura;
+    pickup.add(aura, model);
   }
   const labelText = isHealth ? `+${amount} HP` : weapon.name.replace("Pulse ", "");
   const label = makeTextSprite(labelText, 0.42);
-  label.position.set(0, 1.28, 0);
-  pickup.add(base, core, label);
+  label.position.set(0, isHealth ? 1.28 : 1.58, 0);
+  pickup.add(base, label);
   pickup.position.set(x, 0, z);
   pickup.visible = false;
-  pickup.userData = { id, hit: false, locked: true, type, amount, weaponIndex, label };
+  pickup.userData = { ...pickup.userData, id, hit: false, locked: true, type, amount, weaponIndex, label };
   levelGroup.add(pickup);
   rewardPickups.push(pickup);
 }
@@ -1219,8 +1340,8 @@ function unlockRewardIfReady(rewardId) {
       playSound("gateBreak", { cooldown: 0.12 });
       const glowColor = pickup.userData.type === "health" ? 0x38d878 : 0x73e8ff;
       const glow = new THREE.Mesh(
-        new THREE.RingGeometry(0.55, 0.95, 48),
-        new THREE.MeshBasicMaterial({ color: glowColor, transparent: true, opacity: 0.85, depthWrite: false }),
+        new THREE.RingGeometry(pickup.userData.type === "health" ? 0.55 : 0.72, pickup.userData.type === "health" ? 0.95 : 1.38, 56),
+        new THREE.MeshBasicMaterial({ color: glowColor, transparent: true, opacity: pickup.userData.type === "health" ? 0.85 : 1, depthWrite: false }),
       );
       glow.rotation.x = -Math.PI / 2;
       glow.position.set(pickup.position.x, 0.09, pickup.position.z);
@@ -1386,7 +1507,7 @@ function findTarget() {
   const laneGate = decrementGates
     .filter((gate) => gate.userData.active && gate.userData.hp > 0)
     .filter((gate) => Math.abs(gate.position.x - state.playerX) < gate.userData.width / 2 + 0.92)
-    .filter((gate) => gate.position.z < state.playerZ - 3 && gate.position.z > state.playerZ - 64)
+    .filter((gate) => gate.position.z < state.playerZ - 3 && gate.position.z > state.playerZ - decrementGateShootRange)
     .sort((a, b) => b.position.z - a.position.z)[0];
   if (laneGate) return laneGate;
 
@@ -1798,7 +1919,7 @@ function updateRunning(dt) {
 
   decrementGates.forEach((gate) => {
     if (!gate.userData.active) return;
-    const passedAlive = gate.position.z > state.playerZ + 1.1;
+    const passedAlive = gate.position.z > state.playerZ + decrementGateDespawnGrace;
     if (passedAlive) {
       gate.userData.active = false;
       gate.userData.hit = true;
@@ -1958,10 +2079,32 @@ function updateWorld(dt) {
     }
   });
 
+  weaponPickups.forEach((pickup) => {
+    if (!pickup.userData.hit) {
+      pickup.rotation.y += dt * 0.92;
+      pickup.position.y = Math.sin(performance.now() * 0.004 + pickup.position.z) * 0.08;
+      if (pickup.userData.model) {
+        pickup.userData.model.position.y = pickup.userData.model.userData.baseY + Math.sin(performance.now() * 0.006 + pickup.position.z) * 0.08;
+      }
+      if (pickup.userData.aura) {
+        pickup.userData.aura.material.opacity = 0.34 + Math.sin(performance.now() * 0.008 + pickup.position.z) * 0.1;
+      }
+      pickup.children.forEach((child) => {
+        if (child.isSprite) child.quaternion.copy(camera.quaternion);
+      });
+    }
+  });
+
   rewardPickups.forEach((pickup) => {
     if (pickup.visible && !pickup.userData.hit) {
       pickup.rotation.y += dt * 1.2;
       pickup.position.y = Math.sin(performance.now() * 0.004 + pickup.position.z) * 0.09;
+      if (pickup.userData.model) {
+        pickup.userData.model.position.y = pickup.userData.model.userData.baseY + Math.sin(performance.now() * 0.007 + pickup.position.z) * 0.1;
+      }
+      if (pickup.userData.aura) {
+        pickup.userData.aura.material.opacity = 0.48 + Math.sin(performance.now() * 0.009 + pickup.position.z) * 0.12;
+      }
       pickup.children.forEach((child) => {
         if (child.isSprite) child.quaternion.copy(camera.quaternion);
       });

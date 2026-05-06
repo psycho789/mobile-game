@@ -189,7 +189,7 @@ p {
 }
 
 #shop {
-  margin-top: 22px;
+  margin-top: 18px;
   text-align: left;
 }
 
@@ -198,12 +198,12 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 10px;
+  padding-bottom: 8px;
   color: #f7fbff;
   font-weight: 900;
 }
 
-.shop-header span {
+.shop-header > span {
   color: #aeb9c7;
   font-size: 0.78rem;
   text-transform: uppercase;
@@ -213,59 +213,133 @@ p {
   color: #ffd45a;
 }
 
+.shop-wallet {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .shop-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .shop-upgrade {
   display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  min-height: 112px;
-  gap: 10px;
-  padding: 12px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: start;
+  min-height: 104px;
+  gap: 7px;
+  padding: 9px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035)),
+    rgba(8, 12, 18, 0.66);
+}
+
+.shop-copy {
+  min-width: 0;
 }
 
 .shop-upgrade h3 {
   margin: 0;
   color: #ffffff;
-  font-size: 1rem;
-  line-height: 1.15;
+  font-size: 0.88rem;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
 }
 
 .shop-upgrade p {
-  margin-top: 6px;
-  font-size: 0.84rem;
-  line-height: 1.25;
+  margin-top: 3px;
+  color: #aeb9c7;
+  font-size: 0.68rem;
+  line-height: 1.12;
+  white-space: nowrap;
 }
 
 .shop-upgrade .tier {
   display: inline-flex;
-  margin-top: 8px;
+  margin-top: 5px;
   color: #ffd45a;
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   font-weight: 900;
 }
 
 .shop-upgrade button {
-  width: 108px;
-  min-height: 44px;
-  margin: 0;
-  padding: 0 10px;
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 32px;
+  margin: 2px 0 0;
+  padding: 0 7px;
+  gap: 4px;
   background: #73e8ff;
   color: #061a21;
-  font-size: 0.9rem;
+  font-size: 0.78rem;
+  line-height: 1;
 }
 
 .shop-upgrade button:disabled {
   background: rgba(255, 255, 255, 0.16);
   color: #93a0af;
   cursor: default;
+}
+
+.shop-sprite {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  background-image: url("./assets/shop-icons.svg");
+  background-repeat: no-repeat;
+  background-size: 1000% 100%;
+  image-rendering: auto;
+}
+
+.shop-sprite-ammo {
+  background-position: 0% 0;
+}
+
+.shop-sprite-health {
+  background-position: 11.111% 0;
+}
+
+.shop-sprite-fire-rate {
+  background-position: 22.222% 0;
+}
+
+.shop-sprite-speed {
+  background-position: 33.333% 0;
+}
+
+.shop-sprite-carbine {
+  background-position: 44.444% 0;
+}
+
+.shop-sprite-rifle {
+  background-position: 55.556% 0;
+}
+
+.shop-sprite-cannon {
+  background-position: 66.667% 0;
+}
+
+.shop-sprite-laser {
+  background-position: 77.778% 0;
+}
+
+.shop-sprite-overdrive {
+  background-position: 88.889% 0;
+}
+
+.shop-sprite-coin {
+  width: 18px;
+  height: 18px;
+  background-position: 100% 0;
 }
 
 button {
@@ -308,10 +382,10 @@ button:active {
   }
 
   .shop-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .shop-upgrade {
-    min-height: 98px;
+    min-height: 96px;
   }
 }

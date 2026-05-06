@@ -102,9 +102,11 @@ export const BOSS_TYPES = [
 
 const PLAYER_BASE_SPEED = 12.8;
 const PLAYER_MAX_SPEED_MULTIPLIER = 1.16;
-const DECREMENT_GATE_TARGET_RANGE = 64;
+const DECREMENT_GATE_TARGET_RANGE = 72;
 const DECREMENT_GATE_TIME_BUFFER = 1.1;
 const VAULT_DAMAGE_SAFETY = 0.58;
+const WEAPON_VAULT_TARGET_RATIO = 0.7;
+const HEALTH_VAULT_TARGET_RATIO = 0.55;
 
 export const THEMES = [
   {
@@ -316,14 +318,12 @@ function balanceVaultGateHp(gates, reward, currentWeaponIndex) {
   if (!gates.length) return;
   const limit = practicalVaultDamageLimit(gates, currentWeaponIndex);
   const currentTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
-  if (currentTotal <= limit) return;
+  const targetRatio = reward.type === "health" ? HEALTH_VAULT_TARGET_RATIO : WEAPON_VAULT_TARGET_RATIO;
+  const targetLimit = Math.max(1, Math.floor(limit * targetRatio));
+  if (currentTotal <= targetLimit) return;
 
   const weapon = WEAPONS[Math.max(0, Math.min(currentWeaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
-  const rewardWeaponIndex = reward.weaponIndex ?? currentWeaponIndex;
-  const tierGap = Math.max(0, rewardWeaponIndex - currentWeaponIndex);
-  const minimumShots = reward.type === "health" ? 1.4 : 1.9 + tierGap * 0.35;
-  const minimumTotal = Math.round(weapon.damage * minimumShots * gates.length);
-  const targetTotal = Math.max(Math.min(minimumTotal, limit), Math.floor(limit * (reward.type === "health" ? 0.62 : 0.86)));
+  const targetTotal = targetLimit;
   const weightTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
 
   gates.forEach((gate) => {
@@ -332,7 +332,7 @@ function balanceVaultGateHp(gates, reward, currentWeaponIndex) {
   });
 
   let balancedTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
-  for (let i = gates.length - 1; balancedTotal > limit && i >= 0; i = (i - 1 + gates.length) % gates.length) {
+  for (let i = gates.length - 1; balancedTotal > targetTotal && i >= 0; i = (i - 1 + gates.length) % gates.length) {
     if (gateCanTrim(gates[i], weapon)) {
       gates[i].hp -= 1;
       balancedTotal -= 1;
