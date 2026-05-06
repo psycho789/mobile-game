@@ -21,7 +21,9 @@ export const BOSS_TYPES = [
     id: "cannonKing",
     name: "Cannon King",
     sprite: "boss",
-    attackSprite: "heavy",
+    combatRow: 3,
+    combatCol: 0,
+    visualScale: { width: 4.7, height: 4.15, y: 2.0 },
     hp: 1,
     tint: 0xffffff,
     attackTint: 0xffa34a,
@@ -39,7 +41,9 @@ export const BOSS_TYPES = [
     id: "hoverMech",
     name: "Hover Mech",
     sprite: "heavy",
-    attackSprite: "boss",
+    combatRow: 3,
+    combatCol: 4,
+    visualScale: { width: 4.55, height: 3.8, y: 1.88 },
     hp: 0.92,
     tint: 0x8fe8ff,
     attackTint: 0x65e8ff,
@@ -57,7 +61,9 @@ export const BOSS_TYPES = [
     id: "shieldKnight",
     name: "Shield Knight",
     sprite: "shield",
-    attackSprite: "boss",
+    combatRow: 4,
+    combatCol: 0,
+    visualScale: { width: 4.45, height: 4.25, y: 2.05 },
     hp: 1.18,
     tint: 0xffd45a,
     attackTint: 0xfff1a8,
@@ -76,7 +82,9 @@ export const BOSS_TYPES = [
     id: "cyberBeast",
     name: "Cyber Beast",
     sprite: "boss",
-    attackSprite: "grunt",
+    combatRow: 4,
+    combatCol: 4,
+    visualScale: { width: 4.85, height: 3.55, y: 1.72 },
     hp: 1.28,
     tint: 0xff86ff,
     attackTint: 0xb66cff,
@@ -168,10 +176,18 @@ function rng(seed) {
   };
 }
 
+function makeRunSeed() {
+  return Math.floor(Math.random() * 4294967296) >>> 0;
+}
+
+function mixSeed(level, runSeed, attempt = 0) {
+  return ((runSeed >>> 0) ^ Math.imul(level, 928371) ^ Math.imul(attempt + 1, 2654435761) ^ 44) >>> 0;
+}
+
 function applyOperation(count, op) {
-  if (op.type === "add") return count + op.value;
+  if (op.type === "add") return Math.min(9999, count + op.value);
   if (op.type === "subtract") return Math.max(0, count - op.value);
-  if (op.type === "multiply") return Math.floor(count * op.value);
+  if (op.type === "multiply") return Math.min(9999, Math.floor(count * op.value));
   if (op.type === "divide") return Math.max(0, Math.floor(count / op.value));
   return count;
 }
@@ -189,21 +205,25 @@ function pickWeighted(random, entries) {
 function makeMathGatePair({ random, level, sectionIndex, hard, recentTemplates }) {
   const base = 44 + hard * 7 + sectionIndex * 6;
   const variance = Math.floor(random() * (28 + hard * 3));
+  const mildMultiplierWeight = level < 3 ? 2 : 3 + Math.min(5, Math.floor(level / 3));
+  const tempoMultiplierWeight = level < 6 ? 1 : 2 + Math.min(4, Math.floor(level / 4));
+  const divideWeight = level < 3 ? 1 : 2 + Math.min(4, Math.floor(level / 4));
+  const jackpotWeight = level < 9 ? 1 : 2 + Math.min(2, Math.floor((level - 8) / 5));
   const templates = [
     {
       id: "closeAdds",
-      weight: 34,
+      weight: 38,
       make: () => [
         { type: "add", value: base + variance },
         { type: "add", value: base + 12 + Math.floor(random() * 20) },
       ],
     },
     {
-      id: "addVsMildMult",
-      weight: 27,
+      id: "addVsDouble",
+      weight: mildMultiplierWeight,
       make: () => [
         { type: "add", value: base + 18 + variance },
-        { type: "multiply", value: [1.15, 1.2, 1.25, 1.35][Math.floor(random() * 4)] },
+        { type: "multiply", value: 2 },
       ],
     },
     {
@@ -216,15 +236,15 @@ function makeMathGatePair({ random, level, sectionIndex, hard, recentTemplates }
     },
     {
       id: "tempoChoice",
-      weight: 11,
+      weight: tempoMultiplierWeight,
       make: () => [
-        { type: "multiply", value: [1.35, 1.45, 1.5][Math.floor(random() * 3)] },
+        { type: "multiply", value: 2 },
         { type: "add", value: base + 46 + variance },
       ],
     },
     {
       id: "divideTrap",
-      weight: 7,
+      weight: divideWeight,
       make: () => [
         { type: "divide", value: 2 },
         { type: "add", value: base + 58 + hard * 6 + variance },
@@ -232,9 +252,9 @@ function makeMathGatePair({ random, level, sectionIndex, hard, recentTemplates }
     },
     {
       id: "rareJackpot",
-      weight: level > 2 && sectionIndex > 8 ? 4 : 1,
+      weight: sectionIndex > 8 ? jackpotWeight : 1,
       make: () => [
-        { type: "multiply", value: level > 7 && random() > 0.82 ? 2.5 : 2 },
+        { type: "multiply", value: level > 12 && random() > 0.92 ? 3 : 2 },
         { type: "subtract", value: 35 + hard * 5 + Math.floor(random() * 42) },
       ],
     },
@@ -255,8 +275,91 @@ export function simulateBestPath(startAmmo, gatePairs) {
   return gatePairs.reduce((ammo, pair) => Math.max(applyOperation(ammo, pair.left), applyOperation(ammo, pair.right)), startAmmo);
 }
 
-export function generateLevel(level, { finishZ = -292 } = {}) {
-  const random = rng(level * 928371 + 44);
+function ammoCostForHp(hp, weaponIndex) {
+  const weapon = WEAPONS[Math.max(0, Math.min(weaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
+  return Math.ceil(hp / weapon.damage) * weapon.cost;
+}
+
+function scaleVaultGateHp(baseHp, rewardWeapon, { hard, gateIndex }) {
+  const weaponGateScale = [1, 1.05, 1.35, 1.85, 2.45][rewardWeapon] ?? 2.45;
+  const tierPremium = Math.max(0, rewardWeapon - 1) * (7 + hard * 1.35);
+  const innerLockPremium = gateIndex * Math.max(1, rewardWeapon - 1) * (2.2 + hard * 0.18);
+  return Math.round(baseHp * weaponGateScale + tierPremium + innerLockPremium);
+}
+
+function ammoCostForBoss(bossType, bossHp, weaponIndex) {
+  const weapon = WEAPONS[Math.max(0, Math.min(weaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
+  let ammoCost = 0;
+  let hp = bossHp;
+  let shieldHp = Math.round(bossHp * (bossType.shieldHp ?? 0));
+  let guard = 0;
+
+  while ((hp > 0 || shieldHp > 0) && guard < 5000) {
+    guard += 1;
+    ammoCost += weapon.cost;
+    let remainingDamage = weapon.damage;
+    if (shieldHp > 0) {
+      const shieldMultiplier = weapon.id === "carbine" ? 0.62 : weapon.id === "rifle" ? 0.82 : 1.18;
+      const shieldDamage = Math.min(shieldHp, remainingDamage * shieldMultiplier);
+      shieldHp = Math.max(0, shieldHp - shieldDamage);
+      remainingDamage = Math.max(0, remainingDamage - shieldDamage * 0.45);
+    }
+    hp = Math.max(0, hp - remainingDamage);
+  }
+
+  const regenBuffer = bossType.shieldRegen ? Math.ceil(ammoCost * 0.18) : 0;
+  return ammoCost + regenBuffer;
+}
+
+export function analyzeLevelSolvability(levelData) {
+  let ammo = levelData.startAmmo;
+  let weaponIndex = 0;
+  let ammoSpent = 0;
+  let highestWeapon = 0;
+  const sectionReports = [];
+
+  levelData.sections.forEach((section) => {
+    if (section.gates) {
+      ammo = Math.max(applyOperation(ammo, section.gates.left), applyOperation(ammo, section.gates.right));
+    }
+
+    const enemyCost = section.enemies.reduce((sum, enemy) => sum + ammoCostForHp(enemy.hp, weaponIndex), 0);
+    ammo -= enemyCost;
+    ammoSpent += enemyCost;
+
+    const reward = levelData.rewardPickups.find((pickup) => pickup.id === section.decrementGates?.[0]?.rewardId);
+    let vaultCost = 0;
+    if (reward && reward.weaponIndex > weaponIndex) {
+      vaultCost = section.decrementGates.reduce((sum, gate) => sum + ammoCostForHp(gate.hp, weaponIndex), 0);
+      const futureBossSavings = ammoCostForBoss(levelData.bossType, levelData.bossHp, weaponIndex) - ammoCostForBoss(levelData.bossType, levelData.bossHp, reward.weaponIndex);
+      if (ammo - vaultCost > WEAPONS[reward.weaponIndex].cost && futureBossSavings > vaultCost * 0.35) {
+        ammo -= vaultCost;
+        ammoSpent += vaultCost;
+        weaponIndex = Math.max(weaponIndex, reward.weaponIndex);
+        highestWeapon = Math.max(highestWeapon, weaponIndex);
+      }
+    }
+
+    sectionReports.push({ section: section.type, ammo, weaponIndex, enemyCost, vaultCost });
+  });
+
+  const bossCost = ammoCostForBoss(levelData.bossType, levelData.bossHp, weaponIndex);
+  const finalAmmo = ammo - bossCost;
+  const minimumUsableAmmo = WEAPONS[weaponIndex]?.cost ?? 1;
+  return {
+    solvable: finalAmmo >= minimumUsableAmmo,
+    finalAmmo,
+    bossCost,
+    weaponIndex,
+    highestWeapon,
+    ammoSpent,
+    minimumUsableAmmo,
+    sectionReports,
+  };
+}
+
+function buildLevelCandidate(level, { finishZ, runSeed, attempt }) {
+  const random = rng(mixSeed(level, runSeed, attempt));
   const theme = THEMES[(level - 1) % THEMES.length];
   const bossType = BOSS_TYPES[(level - 1) % BOSS_TYPES.length];
   const hard = level - 1;
@@ -316,11 +419,13 @@ export function generateLevel(level, { finishZ = -292 } = {}) {
       const rewardWeapon = vaultWeaponProgression[Math.min(vaultIndex, vaultWeaponProgression.length - 1)];
       vaultIndex += 1;
       for (let g = 0; g < gateCount; g += 1) {
-        const hp = Math.round(14 + hard * 4.4 + i * 2.1 + g * (5 + hard * 0.55));
+        const baseHp = 14 + hard * 4.4 + i * 2.1 + g * (5 + hard * 0.55);
+        const hp = scaleVaultGateHp(baseHp, rewardWeapon, { hard, gateIndex: g });
         sectionsOut[sectionsOut.length - 1].decrementGates.push({
           x: rewardLane,
           z: z - spacing * (0.22 + g * 0.14),
           hp,
+          rewardWeaponIndex: rewardWeapon,
           rewardId: `s${i}`,
           index: g,
           total: gateCount,
@@ -355,5 +460,31 @@ export function generateLevel(level, { finishZ = -292 } = {}) {
 
   const expectedAmmo = simulateBestPath(startAmmo, gatePairs);
   const bossHp = Math.round((124 + level * 58) * bossType.hp);
-  return { theme, bossType, sections: sectionsOut, weaponPickups, rewardPickups, coins, obstacles, expectedAmmo, startAmmo, bossHp };
+  return { theme, bossType, sections: sectionsOut, weaponPickups, rewardPickups, coins, obstacles, expectedAmmo, startAmmo, bossHp, runSeed };
+}
+
+function softenLevel(levelData, analysis) {
+  const deficit = Math.max(0, analysis.minimumUsableAmmo - analysis.finalAmmo);
+  const cushion = Math.max(60, Math.ceil(levelData.bossHp * 0.08));
+  levelData.startAmmo += deficit + cushion;
+  levelData.expectedAmmo = simulateBestPath(levelData.startAmmo, levelData.sections.filter((section) => section.gates).map((section) => section.gates));
+  return levelData;
+}
+
+export function generateLevel(level, { finishZ = -292, seed, maxAttempts = 10 } = {}) {
+  const runSeed = seed === undefined ? makeRunSeed() : seed >>> 0;
+  let fallback = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = buildLevelCandidate(level, { finishZ, runSeed, attempt });
+    const analysis = analyzeLevelSolvability(candidate);
+    candidate.solvability = analysis;
+    if (analysis.solvable) return candidate;
+    fallback = candidate;
+  }
+
+  const analysis = analyzeLevelSolvability(fallback);
+  const softened = softenLevel(fallback, analysis);
+  softened.solvability = analyzeLevelSolvability(softened);
+  return softened;
 }

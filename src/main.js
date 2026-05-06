@@ -49,10 +49,12 @@ const trackLength = 860;
 const finishZ = -812;
 const bossZ = -834;
 const squadSize = 3;
+const bossVisibleActivationRange = 190;
 
 const state = {
   phase: "menu",
   level: 1,
+  runSeed: 0,
   coins: 0,
   ammo: 60,
   health: 100,
@@ -71,6 +73,9 @@ const state = {
   bossAttackIndex: 0,
   bossAttackTimer: 0,
   bossWindupTimer: 0,
+  bossTurretTimer: 0,
+  bossTurretIndex: 0,
+  bossVisibleActive: false,
   fireCooldown: 0,
   weaponIndex: 0,
   failReason: "",
@@ -187,12 +192,16 @@ const reusableVectors = {
 };
 const atlasTexture = new THREE.TextureLoader().load("./assets/sprite-atlas.png");
 atlasTexture.colorSpace = THREE.SRGBColorSpace;
+const bossCombatTexture = new THREE.TextureLoader().load("./assets/enemy-boss-combat-sheet.png");
+bossCombatTexture.colorSpace = THREE.SRGBColorSpace;
 const runnerTexture = new THREE.TextureLoader().load("./assets/player-runner-sheet.png");
 runnerTexture.colorSpace = THREE.SRGBColorSpace;
 const powerTexture = new THREE.TextureLoader().load("./assets/player-power-tiers.png");
 powerTexture.colorSpace = THREE.SRGBColorSpace;
 
 const atlasSize = { width: 1536, height: 1024 };
+const bossCombatSize = { width: 1536, height: 1024 };
+const bossCombatCell = { width: bossCombatSize.width / 8, height: bossCombatSize.height / 6 };
 const atlasRegions = {
   hero: { x: 32, y: 130, w: 260, h: 420 },
   grunt: { x: 305, y: 172, w: 275, h: 378 },
@@ -237,10 +246,58 @@ function makeAtlasMaterial(regionName) {
   return material;
 }
 
+function makeBossCombatMaterial(bossType, visualState = "idle") {
+  const frameByState = {
+    idle: 0,
+    enrageIdle: 1,
+    enrage: 1,
+    attack: 2,
+    shield: 2,
+    hit: 3,
+    death: 3,
+  };
+  const frame = frameByState[visualState] ?? 0;
+  const region = {
+    x: (bossType.combatCol + frame) * bossCombatCell.width,
+    y: bossType.combatRow * bossCombatCell.height,
+    w: bossCombatCell.width,
+    h: bossCombatCell.height,
+  };
+  const texture = bossCombatTexture.clone();
+  texture.repeat.set(region.w / bossCombatSize.width, region.h / bossCombatSize.height);
+  texture.offset.set(region.x / bossCombatSize.width, 1 - (region.y + region.h) / bossCombatSize.height);
+  texture.needsUpdate = true;
+  return new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    alphaTest: 0.05,
+  });
+}
+
 function makeAtlasSprite(regionName, width, height) {
   const sprite = new THREE.Sprite(makeAtlasMaterial(regionName));
   sprite.scale.set(width, height, 1);
   return sprite;
+}
+
+function makeHostileProjectileSprite({ color, width, height, glow = 0.28 }) {
+  const projectile = makeAtlasSprite("enemyBullet", width, height);
+  projectile.material.color.setHex(color);
+  projectile.material.opacity = 0.98;
+  projectile.renderOrder = 4;
+
+  if (glow > 0) {
+    const aura = makeAtlasSprite("flash", width * 1.9, height * 1.7);
+    aura.material.color.setHex(color);
+    aura.material.opacity = glow;
+    aura.position.z = -0.01;
+    aura.renderOrder = 3;
+    projectile.add(aura);
+    projectile.userData.aura = aura;
+  }
+
+  return projectile;
 }
 
 function makeRunnerMaterial(regionName) {
@@ -491,18 +548,16 @@ function setBossVisualState(visualState, duration = 0.16) {
   if (!bossType || !boss.userData.sprite) return;
   boss.userData.visualState = visualState;
   boss.userData.visualTimer = Math.max(boss.userData.visualTimer ?? 0, duration);
-  const alternateState = visualState === "attack" || visualState === "enrage" || visualState === "shield" || visualState === "death";
-  const regionName = alternateState ? bossType.attackSprite ?? bossType.sprite : bossType.sprite;
-  boss.userData.sprite.material.map = makeAtlasMaterial(regionName).map;
-  boss.userData.sprite.material.color.setHex(alternateState ? bossType.attackTint ?? bossType.tint : bossType.tint);
+  boss.userData.sprite.material.map = makeBossCombatMaterial(bossType, visualState).map;
+  boss.userData.sprite.material.color.setHex(0xffffff);
 }
 
 function restoreBossIdleVisual() {
   const bossType = currentBossType();
   if (!bossType || !boss.userData.sprite) return;
   boss.userData.visualState = state.bossEnraged ? "enrageIdle" : "idle";
-  boss.userData.sprite.material.map = makeAtlasMaterial(bossType.sprite).map;
-  boss.userData.sprite.material.color.setHex(state.bossEnraged ? bossType.attackTint ?? bossType.tint : bossType.tint);
+  boss.userData.sprite.material.map = makeBossCombatMaterial(bossType, boss.userData.visualState).map;
+  boss.userData.sprite.material.color.setHex(0xffffff);
 }
 
 function applyOperation(count, op) {
@@ -514,7 +569,7 @@ function applyOperation(count, op) {
 }
 
 function opLabel(op) {
-  const symbols = { add: "+", subtract: "-", multiply: "x", divide: "/" };
+  const symbols = { add: "+", subtract: "-", multiply: "x", divide: "÷" };
   return `${symbols[op.type]}${op.value}`;
 }
 
@@ -816,6 +871,7 @@ function syncSquadModels() {
 
 function resetRun(nextLevel = false) {
   if (nextLevel) state.level += 1;
+  state.runSeed = Math.floor(Math.random() * 4294967296) >>> 0;
   state.speed = 12.8;
   state.playerX = 0;
   state.targetX = 0;
@@ -824,8 +880,11 @@ function resetRun(nextLevel = false) {
   state.fireCooldown = 0;
   state.bossAttackTimer = 0.22;
   state.bossWindupTimer = 0;
+  state.bossTurretTimer = 0.36;
+  state.bossTurretIndex = 0;
   state.bossAttackIndex = 0;
   state.bossEnraged = false;
+  state.bossVisibleActive = false;
   state.failReason = "";
   state.invulnerableTimer = 0;
   state.maxHealth = 100 + Math.min(40, Math.floor((state.level - 1) * 4));
@@ -833,7 +892,7 @@ function resetRun(nextLevel = false) {
   setWeapon(0);
   state.toastTimer = 0;
   state.hitFlashTimer = 0;
-  const levelData = generateLevel(state.level, { finishZ });
+  const levelData = generateLevel(state.level, { finishZ, seed: state.runSeed });
   state.maxBossHp = levelData.bossHp;
   state.bossHp = state.maxBossHp;
   state.maxBossShieldHp = Math.round(state.maxBossHp * (levelData.bossType.shieldHp ?? 0));
@@ -846,9 +905,10 @@ function resetRun(nextLevel = false) {
   boss.position.set(0, 0, bossZ);
   const bossSprite = boss.userData.sprite;
   if (bossSprite) {
-    bossSprite.material.map = makeAtlasMaterial(levelData.bossType.sprite).map;
-    bossSprite.material.color.setHex(levelData.bossType.tint);
-    bossSprite.scale.set(levelData.bossType.sprite === "boss" ? 3.8 : 3.2, levelData.bossType.sprite === "boss" ? 4.95 : 4.15, 1);
+    bossSprite.material.map = makeBossCombatMaterial(levelData.bossType, "idle").map;
+    bossSprite.material.color.setHex(0xffffff);
+    bossSprite.scale.set(levelData.bossType.visualScale.width, levelData.bossType.visualScale.height, 1);
+    bossSprite.position.y = levelData.bossType.visualScale.y;
   }
   boss.userData.visualTimer = 0;
   boss.userData.visualState = "idle";
@@ -1023,8 +1083,20 @@ function spawnEnemyProjectile(enemy, offsetX = 0, speedBonus = 0, damageBonus = 
     0.72,
     squadGroup.position.z + 0.45,
   );
-  const projectile = makeAtlasSprite("enemyBullet", 0.66, 0.3);
-  projectile.material.color.setHex(enemy.userData.type === "heavy" ? 0xff5cff : enemy.userData.type === "drone" ? 0x73e8ff : enemy.userData.type === "turret" ? 0xa7ff4f : 0xff6a3d);
+  const enemyColor = enemy.userData.type === "heavy" ? 0xff5cff : enemy.userData.type === "drone" ? 0x73e8ff : enemy.userData.type === "turret" ? 0xa7ff4f : 0xff6a3d;
+  const projectileSize = {
+    grunt: [0.86, 0.4],
+    shield: [0.95, 0.46],
+    heavy: [1.28, 0.62],
+    drone: [0.84, 0.38],
+    turret: [1.08, 0.5],
+  }[enemy.userData.type] ?? [0.86, 0.4];
+  const projectile = makeHostileProjectileSprite({
+    color: enemyColor,
+    width: projectileSize[0],
+    height: projectileSize[1],
+    glow: enemy.userData.type === "heavy" ? 0.42 : enemy.userData.type === "turret" ? 0.34 : 0.26,
+  });
   projectile.position.copy(start);
   const direction = targetPos.sub(start).normalize();
   const speed = (enemy.userData.type === "heavy" ? 28 : enemy.userData.type === "drone" ? 48 : enemy.userData.type === "turret" ? 38 : 35) + speedBonus;
@@ -1069,22 +1141,31 @@ function enemyIsShootable(enemy) {
   return distance >= 3 && distance <= enemy.userData.engagementRange;
 }
 
-function spawnBossProjectile(pattern = "single", offsetX = 0, damage = 12, speed = 30, radius = 0.58) {
+function spawnBossProjectile(pattern = "single", offsetX = 0, damage = 12, speed = 30, radius = 0.58, options = {}) {
   const start = reusableVectors.one;
   boss.userData.muzzle.getWorldPosition(start);
   const target = new THREE.Vector3(squadGroup.position.x + offsetX, 0.76, squadGroup.position.z + 0.35);
-  const projectile = makeAtlasSprite("enemyBullet", radius * 1.5, radius * 0.78);
-  projectile.material.color.setHex(state.currentLevelData?.bossType?.projectileColor ?? 0xff4bd8);
+  const color = state.currentLevelData?.bossType?.projectileColor ?? 0xff4bd8;
+  const isStream = options.stream || pattern === "bossTurret";
+  const projectile = makeHostileProjectileSprite({
+    color,
+    width: options.width ?? (isStream ? (options.preFight ? 1.35 : 1.85) : radius * 2.15),
+    height: options.height ?? (isStream ? (options.preFight ? 0.56 : 0.72) : radius * 1.05),
+    glow: isStream ? 0.48 : 0.36,
+  });
   projectile.position.copy(start);
+  const travelDistance = start.distanceTo(target);
   const direction = target.sub(start).normalize();
   projectile.userData = {
     hostile: true,
     bossShot: true,
+    preFight: Boolean(options.preFight),
     pattern,
     damage,
     velocity: direction.multiplyScalar(speed),
     radius,
-    ttl: 3,
+    hitPadding: options.hitPadding ?? (isStream ? 0.62 : 1.05),
+    ttl: options.ttl ?? Math.max(3, travelDistance / Math.max(1, speed) + 0.8),
     previousPosition: start.clone(),
     alive: true,
   };
@@ -1095,11 +1176,14 @@ function spawnBossProjectile(pattern = "single", offsetX = 0, damage = 12, speed
 
 function spawnBossTelegraph(offsetX = 0, width = 0.14) {
   const color = currentBossType()?.projectileColor ?? 0xff4bd8;
+  const startZ = boss.position.z + 4.2;
+  const endZ = squadGroup.position.z + 0.35;
+  const length = Math.max(8.5, Math.abs(startZ - endZ));
   const beam = new THREE.Mesh(
-    new THREE.BoxGeometry(width, 0.045, 8.5),
+    new THREE.BoxGeometry(width, 0.045, length),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.62, depthWrite: false }),
   );
-  beam.position.set((squadGroup.position.x + offsetX) * 0.5, 0.78, bossZ + 4.2);
+  beam.position.set((squadGroup.position.x + offsetX) * 0.5, 0.78, (startZ + endZ) * 0.5);
   beam.rotation.y = Math.atan2(squadGroup.position.x + offsetX - boss.position.x, squadGroup.position.z - boss.position.z);
   beam.userData = { effect: true, ttl: 0.14 };
   projectileGroup.add(beam);
@@ -1137,7 +1221,8 @@ function shootAtTarget(dt) {
   weaponEl.textContent = weapon.name;
   if (!target || state.fireCooldown > 0) return;
   if (state.ammo < weapon.cost) {
-    if (state.ammo <= 0) finishRun(false);
+    state.failReason = "Out of Ammo";
+    finishRun(false);
     return;
   }
   setAmmo(state.ammo - weapon.cost);
@@ -1190,18 +1275,19 @@ function updateEnemyShooting(dt) {
     if (enemy.userData.shootCooldown <= 0) {
       enemy.userData.shootWindup = enemy.userData.type === "heavy" ? 0.28 : enemy.userData.type === "turret" ? 0.12 : 0.18;
       playSound("enemyWindup", { pitch: enemy.userData.type === "heavy" ? 0.75 : enemy.userData.type === "drone" ? 1.25 : 1, cooldown: 0.08 });
-      spawnEnemyTelegraph(enemy);
+      if (enemy.userData.type === "heavy" || enemy.userData.type === "turret") spawnEnemyTelegraph(enemy);
       enemy.userData.shootCooldown = enemy.userData.shootEvery;
     }
   });
 }
 
 function updateBossAttacks(dt) {
-  if (state.phase !== "boss" || state.bossHp <= 0) return;
+  const preFight = state.phase === "running" && state.bossVisibleActive;
+  if (!(state.phase === "boss" || preFight) || state.bossHp <= 0) return;
   const bossType = currentBossType();
   if (!bossType) return;
   const hpRatio = state.bossHp / state.maxBossHp;
-  if (!state.bossEnraged && hpRatio <= (bossType.enrageAt ?? 0.42)) {
+  if (!preFight && !state.bossEnraged && hpRatio <= (bossType.enrageAt ?? 0.42)) {
     state.bossEnraged = true;
     state.bossAttackTimer = 0.08;
     state.shakeTimer = Math.max(state.shakeTimer, 0.45);
@@ -1213,6 +1299,31 @@ function updateBossAttacks(dt) {
     state.bossShieldHp = Math.min(state.maxBossShieldHp, state.bossShieldHp + bossType.shieldRegen * dt);
     updateShieldBar(bossShieldBar, state.bossShieldHp, state.maxBossShieldHp);
   }
+
+  state.bossTurretTimer -= dt;
+  if (state.bossTurretTimer <= 0) {
+    const level = state.level;
+    const enraged = state.bossEnraged;
+    const playerBias = THREE.MathUtils.clamp(squadGroup.position.x, -2.75, 2.75);
+    const turretStep = state.bossTurretIndex % 6;
+    const offsetPattern = preFight ? [0, -0.5, 0.5, -0.9, 0.9, 0] : [0, -0.38, 0.38, -0.74, 0.74, 0];
+    const offset = THREE.MathUtils.clamp(playerBias + offsetPattern[turretStep], -3.05, 3.05);
+    const turretDamage = preFight
+      ? Math.max(1, Math.floor(bossType.damage * 0.24 + level * 0.18))
+      : Math.max(3, Math.floor(bossType.damage * 0.42 + level * 0.34) + (enraged ? 1 : 0));
+    const turretSpeed = preFight
+      ? Math.max(86, bossType.projectileSpeed * 2.1)
+      : bossType.projectileSpeed + 24 + (enraged ? 9 : 0);
+    const turretRadius = preFight ? 0.36 : 0.42;
+
+    setBossVisualState("attack", preFight ? 0.1 : 0.12);
+    spawnBossProjectile("bossTurret", offset, turretDamage, turretSpeed, turretRadius, { preFight, stream: true });
+    state.bossTurretIndex += 1;
+    state.bossTurretTimer = preFight
+      ? Math.max(0.34, 0.48 - Math.min(0.1, level * 0.01))
+      : Math.max(0.12, (enraged ? 0.13 : 0.17) - Math.min(0.03, level * 0.002));
+  }
+
   state.bossWindupTimer = Math.max(0, state.bossWindupTimer - dt);
   state.bossAttackTimer -= dt;
   if (state.bossAttackTimer > 0) return;
@@ -1222,11 +1333,28 @@ function updateBossAttacks(dt) {
   const pattern = patterns[state.bossAttackIndex % patterns.length];
   state.bossAttackIndex += 1;
   const enraged = state.bossEnraged;
-  const damage = bossType.damage + Math.min(12, Math.floor(level * 1.15)) + (enraged ? 3 : 0);
-  const speed = bossType.projectileSpeed + (enraged ? 8 : 0);
-  const burstCount = bossType.burstCount + Number(enraged);
+  const damage = preFight
+    ? Math.max(3, Math.floor(bossType.damage * 0.45 + level * 0.35))
+    : bossType.damage + Math.min(12, Math.floor(level * 1.15)) + (enraged ? 3 : 0);
+  const speed = preFight ? Math.max(78, bossType.projectileSpeed * 1.9) : bossType.projectileSpeed + (enraged ? 8 : 0);
+  const burstCount = preFight ? 1 + Number(level > 4 && state.bossAttackIndex % 3 === 0) : bossType.burstCount + Number(enraged);
   const playerBias = THREE.MathUtils.clamp(squadGroup.position.x, -2.6, 2.6);
   setBossVisualState("attack", 0.18);
+
+  if (preFight) {
+    const offset = playerBias + (state.bossAttackIndex % 2 === 0 ? -0.42 : 0.42);
+    spawnBossTelegraph(offset, 0.12);
+    spawnBossProjectile("longRange", offset, damage, speed, 0.38, { preFight: true });
+    if (burstCount > 1) {
+      const mirrorOffset = playerBias - (offset - playerBias);
+      spawnBossTelegraph(mirrorOffset, 0.1);
+      spawnBossProjectile("longRange", mirrorOffset, Math.max(2, damage - 1), speed * 0.94, 0.34, { preFight: true });
+    }
+    state.bossWindupTimer = 0.22;
+    state.shakeTimer = Math.max(state.shakeTimer, 0.08);
+    state.bossAttackTimer = Math.max(1.8, 2.4 - Math.min(0.26, level * 0.018));
+    return;
+  }
 
   if (pattern === "turret") {
     for (let i = 0; i < burstCount; i += 1) {
@@ -1240,7 +1368,7 @@ function updateBossAttacks(dt) {
       spawnBossTelegraph(offset, 0.12);
       spawnBossProjectile("fan", offset, Math.max(7, damage - 2), speed - 3, 0.5);
     });
-  } else if (pattern === "sweep") {
+  } else if (pattern === "sweep" || pattern === "spread") {
     const direction = state.bossAttackIndex % 2 === 0 ? 1 : -1;
     [-2.8, -1.8, -0.8, 0.2, 1.2, 2.2].forEach((offset, i) => {
       const laneOffset = offset * direction;
@@ -1269,7 +1397,7 @@ function updateBossAttacks(dt) {
 
   state.bossWindupTimer = 0.18;
   state.shakeTimer = Math.max(state.shakeTimer, enraged ? 0.18 : 0.11);
-  state.bossAttackTimer = Math.max(0.32, (enraged ? bossType.enrageRate : bossType.attackRate) - Math.min(0.06, level * 0.004));
+  state.bossAttackTimer = Math.max(0.72, (enraged ? bossType.enrageRate + 0.62 : bossType.attackRate + 0.75) - Math.min(0.08, level * 0.004));
 }
 
 function damageEnemy(enemy, amount) {
@@ -1376,7 +1504,7 @@ function updateProjectiles(dt) {
       const segmentLengthSq = Math.max(0.0001, segment.lengthSq());
       const t = THREE.MathUtils.clamp(toSquad.dot(segment) / segmentLengthSq, 0, 1);
       const closest = previous.clone().add(segment.multiplyScalar(t));
-      const hitRadius = projectile.userData.radius + (projectile.userData.bossShot ? 1.05 : 0.78);
+      const hitRadius = projectile.userData.radius + (projectile.userData.hitPadding ?? (projectile.userData.bossShot ? 1.05 : 0.78));
       if (closest.distanceTo(squadPoint) < hitRadius) {
         damagePlayer(projectile.userData.damage);
         projectileGroup.remove(projectile);
@@ -1419,6 +1547,18 @@ function updateProjectiles(dt) {
     projectile.position.add(direction.normalize().multiplyScalar(projectile.userData.speed * dt));
     projectile.scale.setScalar(1 + Math.sin(performance.now() * 0.03) * 0.18);
   }
+}
+
+function activateVisibleBoss() {
+  if (state.bossVisibleActive || state.phase !== "running" || state.bossHp <= 0) return;
+  state.bossVisibleActive = true;
+  state.bossAttackTimer = 0.75;
+  state.bossTurretTimer = 0.22;
+  state.bossTurretIndex = 0;
+  state.bossWindupTimer = 0.2;
+  bossPanel.style.display = "flex";
+  playSound("bossIntro", { cooldown: 0.8 });
+  showToast("Boss Spotted");
 }
 
 function updateRunning(dt) {
@@ -1493,6 +1633,8 @@ function updateRunning(dt) {
   });
 
   updateEnemyShooting(dt);
+  if (state.playerZ > boss.position.z && state.playerZ - boss.position.z <= bossVisibleActivationRange) activateVisibleBoss();
+  updateBossAttacks(dt);
   shootAtTarget(dt);
   if (state.ammo <= 0) {
     finishRun(false);
@@ -1501,7 +1643,10 @@ function updateRunning(dt) {
 
   if (state.playerZ <= finishZ) {
     state.phase = "boss";
+    state.bossVisibleActive = false;
     state.bossAttackTimer = 0.16;
+    state.bossTurretTimer = 0.12;
+    state.bossTurretIndex = 0;
     state.bossWindupTimer = 0.12;
     bossPanel.style.display = "flex";
     stopLoop("run");
@@ -1549,6 +1694,8 @@ function updateBossFight(dt) {
 }
 
 function updateWorld(dt) {
+  state.invulnerableTimer = Math.max(0, state.invulnerableTimer - dt);
+
   gates.forEach((gate) => {
     gate.children.forEach((child) => {
       if (child.isSprite) child.quaternion.copy(camera.quaternion);
