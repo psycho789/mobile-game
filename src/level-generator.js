@@ -100,6 +100,12 @@ export const BOSS_TYPES = [
   },
 ];
 
+const PLAYER_BASE_SPEED = 12.8;
+const PLAYER_MAX_SPEED_MULTIPLIER = 1.16;
+const DECREMENT_GATE_TARGET_RANGE = 64;
+const DECREMENT_GATE_TIME_BUFFER = 1.1;
+const VAULT_DAMAGE_SAFETY = 0.58;
+
 export const THEMES = [
   {
     id: "neon",
@@ -297,6 +303,48 @@ function scaleVaultGateHp(baseHp, reward, { hard, gateIndex, sectionIndex, curre
   return Math.round(currentWeapon.damage * targetShots);
 }
 
+function practicalVaultDamageLimit(gates, weaponIndex) {
+  if (!gates.length) return 0;
+  const weapon = WEAPONS[Math.max(0, Math.min(weaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
+  const maxSpeed = PLAYER_BASE_SPEED * PLAYER_MAX_SPEED_MULTIPLIER;
+  const span = Math.abs(gates[gates.length - 1].z - gates[0].z);
+  const availableTime = (DECREMENT_GATE_TARGET_RANGE + span + DECREMENT_GATE_TIME_BUFFER) / maxSpeed;
+  return Math.floor((weapon.damage / weapon.cooldown) * availableTime * VAULT_DAMAGE_SAFETY);
+}
+
+function balanceVaultGateHp(gates, reward, currentWeaponIndex) {
+  if (!gates.length) return;
+  const limit = practicalVaultDamageLimit(gates, currentWeaponIndex);
+  const currentTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
+  if (currentTotal <= limit) return;
+
+  const weapon = WEAPONS[Math.max(0, Math.min(currentWeaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
+  const rewardWeaponIndex = reward.weaponIndex ?? currentWeaponIndex;
+  const tierGap = Math.max(0, rewardWeaponIndex - currentWeaponIndex);
+  const minimumShots = reward.type === "health" ? 1.4 : 1.9 + tierGap * 0.35;
+  const minimumTotal = Math.round(weapon.damage * minimumShots * gates.length);
+  const targetTotal = Math.max(Math.min(minimumTotal, limit), Math.floor(limit * (reward.type === "health" ? 0.62 : 0.86)));
+  const weightTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
+
+  gates.forEach((gate) => {
+    const weightedHp = Math.max(1, Math.round((targetTotal * gate.hp) / weightTotal));
+    gate.hp = weightedHp;
+  });
+
+  let balancedTotal = gates.reduce((sum, gate) => sum + gate.hp, 0);
+  for (let i = gates.length - 1; balancedTotal > limit && i >= 0; i = (i - 1 + gates.length) % gates.length) {
+    if (gateCanTrim(gates[i], weapon)) {
+      gates[i].hp -= 1;
+      balancedTotal -= 1;
+    }
+    if (!gates.some((gate) => gateCanTrim(gate, weapon))) break;
+  }
+}
+
+function gateCanTrim(gate, weapon) {
+  return gate.hp > Math.max(1, Math.round(weapon.damage * 0.8));
+}
+
 function ammoCostForBoss(bossType, bossHp, weaponIndex) {
   const weapon = WEAPONS[Math.max(0, Math.min(weaponIndex, WEAPONS.length - 1))] ?? WEAPONS[0];
   let ammoCost = 0;
@@ -327,6 +375,7 @@ export function analyzeLevelSolvability(levelData) {
   let ammoSpent = 0;
   let highestWeapon = 0;
   const sectionReports = [];
+  const vaultReports = [];
 
   levelData.sections.forEach((section) => {
     if (section.gates) {
@@ -339,10 +388,22 @@ export function analyzeLevelSolvability(levelData) {
 
     const reward = levelData.rewardPickups.find((pickup) => pickup.id === section.decrementGates?.[0]?.rewardId);
     let vaultCost = 0;
+    if (reward && section.decrementGates.length) {
+      const vaultHp = section.decrementGates.reduce((sum, gate) => sum + gate.hp, 0);
+      const practicalLimit = practicalVaultDamageLimit(section.decrementGates, weaponIndex);
+      vaultReports.push({
+        section: section.type,
+        rewardType: reward.type,
+        rewardWeaponIndex: reward.weaponIndex,
+        weaponIndex,
+        vaultHp,
+        practicalLimit,
+        breakable: vaultHp <= practicalLimit,
+      });
+    }
     if (reward?.type === "weapon" && reward.weaponIndex > weaponIndex) {
       vaultCost = section.decrementGates.reduce((sum, gate) => sum + ammoCostForHp(gate.hp, weaponIndex), 0);
-      const futureBossSavings = ammoCostForBoss(levelData.bossType, levelData.bossHp, weaponIndex) - ammoCostForBoss(levelData.bossType, levelData.bossHp, reward.weaponIndex);
-      if (ammo - vaultCost > WEAPONS[reward.weaponIndex].cost && futureBossSavings > vaultCost * 0.35) {
+      if (ammo - vaultCost > WEAPONS[reward.weaponIndex].cost) {
         ammo -= vaultCost;
         ammoSpent += vaultCost;
         weaponIndex = Math.max(weaponIndex, reward.weaponIndex);
@@ -356,15 +417,18 @@ export function analyzeLevelSolvability(levelData) {
   const bossCost = ammoCostForBoss(levelData.bossType, levelData.bossHp, weaponIndex);
   const finalAmmo = ammo - bossCost;
   const minimumUsableAmmo = WEAPONS[weaponIndex]?.cost ?? 1;
+  const practicalVaultsSolvable = vaultReports.every((report) => report.breakable);
   return {
-    solvable: finalAmmo >= minimumUsableAmmo,
+    solvable: finalAmmo >= minimumUsableAmmo && practicalVaultsSolvable,
     finalAmmo,
     bossCost,
     weaponIndex,
     highestWeapon,
     ammoSpent,
     minimumUsableAmmo,
+    practicalVaultsSolvable,
     sectionReports,
+    vaultReports,
   };
 }
 
@@ -457,6 +521,7 @@ function buildLevelCandidate(level, { finishZ, runSeed, attempt }) {
           total: gateCount,
         });
       }
+      balanceVaultGateHp(sectionsOut[sectionsOut.length - 1].decrementGates, reward, expectedWeaponIndex);
       rewardPickups.push({
         id: `s${i}`,
         x: rewardLane,

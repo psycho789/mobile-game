@@ -19,6 +19,8 @@ const resultCopy = document.querySelector("#result-copy");
 const startButton = document.querySelector("#start");
 const restartButton = document.querySelector("#restart");
 const audioToggle = document.querySelector("#audio-toggle");
+const shopCoinsEl = document.querySelector("#shop-coins");
+const shopGrid = document.querySelector("#shop-grid");
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -50,12 +52,60 @@ const finishZ = -812;
 const bossZ = -834;
 const squadSize = 3;
 const bossVisibleActivationRange = 190;
+const baseRunSpeed = 12.8;
+const baseMaxHealth = 100;
+const levelHealthBonusCap = 40;
+const ammoUpgradeBonus = 120;
+const healthUpgradeBonus = 15;
+const fireRateUpgradePercent = 6;
+const speedUpgradePercent = 4;
+
+const upgradeDefinitions = [
+  {
+    id: "ammo",
+    name: "Ammo Pack",
+    maxLevel: 8,
+    baseCost: 300,
+    costScale: 1.7,
+    effect: `+${ammoUpgradeBonus} starting ammo`,
+  },
+  {
+    id: "health",
+    name: "Armor Plating",
+    maxLevel: 6,
+    baseCost: 450,
+    costScale: 1.85,
+    effect: `+${healthUpgradeBonus} max health`,
+  },
+  {
+    id: "fireRate",
+    name: "Trigger Kit",
+    maxLevel: 5,
+    baseCost: 900,
+    costScale: 2.1,
+    effect: `-${fireRateUpgradePercent}% weapon cooldown`,
+  },
+  {
+    id: "speed",
+    name: "Sprint Boots",
+    maxLevel: 4,
+    baseCost: 700,
+    costScale: 2,
+    effect: `+${speedUpgradePercent}% run speed`,
+  },
+];
 
 const state = {
   phase: "menu",
   level: 1,
   runSeed: 0,
   coins: 0,
+  upgrades: {
+    ammo: 0,
+    health: 0,
+    fireRate: 0,
+    speed: 0,
+  },
   ammo: 60,
   health: 100,
   maxHealth: 100,
@@ -543,6 +593,115 @@ function currentBossType() {
   return state.currentLevelData?.bossType;
 }
 
+function roundUpgradeCost(value) {
+  const step = value < 1000 ? 10 : value < 10000 ? 50 : 100;
+  return Math.ceil(value / step) * step;
+}
+
+function upgradeCost(definition, level = state.upgrades[definition.id] ?? 0) {
+  return roundUpgradeCost(definition.baseCost * Math.pow(definition.costScale, level));
+}
+
+function getAmmoUpgradeBonus() {
+  return (state.upgrades.ammo ?? 0) * ammoUpgradeBonus;
+}
+
+function getHealthUpgradeBonus() {
+  return (state.upgrades.health ?? 0) * healthUpgradeBonus;
+}
+
+function getSpeedMultiplier() {
+  return 1 + ((state.upgrades.speed ?? 0) * speedUpgradePercent) / 100;
+}
+
+function getFireCooldownMultiplier() {
+  return Math.max(0.62, 1 - ((state.upgrades.fireRate ?? 0) * fireRateUpgradePercent) / 100);
+}
+
+function upgradeSummary(definition) {
+  const level = state.upgrades[definition.id] ?? 0;
+  if (definition.id === "ammo") return `Current bonus +${level * ammoUpgradeBonus} ammo. Next: ${definition.effect}.`;
+  if (definition.id === "health") return `Current bonus +${level * healthUpgradeBonus} health. Next: ${definition.effect}.`;
+  if (definition.id === "fireRate") return `Current bonus -${level * fireRateUpgradePercent}% cooldown. Next: ${definition.effect}.`;
+  return `Current bonus +${level * speedUpgradePercent}% speed. Next: ${definition.effect}.`;
+}
+
+function updateCoinDisplays() {
+  coinsEl.textContent = state.coins;
+  if (shopCoinsEl) shopCoinsEl.textContent = state.coins;
+}
+
+function addCoins(amount) {
+  state.coins = Math.max(0, Math.floor(state.coins + amount));
+  updateCoinDisplays();
+  if (state.phase === "result") renderShop();
+}
+
+function spendCoins(amount) {
+  const cost = Math.floor(amount);
+  if (state.coins < cost) return false;
+  state.coins -= cost;
+  updateCoinDisplays();
+  renderShop();
+  return true;
+}
+
+function renderShop() {
+  if (!shopGrid) return;
+  if (shopCoinsEl) shopCoinsEl.textContent = state.coins;
+  shopGrid.replaceChildren(
+    ...upgradeDefinitions.map((definition) => {
+      const level = state.upgrades[definition.id] ?? 0;
+      const maxed = level >= definition.maxLevel;
+      const cost = maxed ? 0 : upgradeCost(definition, level);
+      const canBuy = !maxed && state.coins >= cost;
+      const item = document.createElement("article");
+      item.className = "shop-upgrade";
+
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.textContent = definition.name;
+      const detail = document.createElement("p");
+      detail.textContent = maxed ? `Maximum upgrade reached. ${definition.effect}.` : upgradeSummary(definition);
+      const tier = document.createElement("span");
+      tier.className = "tier";
+      tier.textContent = `${level}/${definition.maxLevel}`;
+      copy.append(title, detail, tier);
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.upgradeId = definition.id;
+      button.disabled = !canBuy;
+      button.textContent = maxed ? "Maxed" : `${cost} coins`;
+      button.setAttribute("aria-label", maxed ? `${definition.name} maxed` : `Buy ${definition.name} for ${cost} coins`);
+
+      item.append(copy, button);
+      return item;
+    }),
+  );
+}
+
+function purchaseUpgrade(upgradeId) {
+  const definition = upgradeDefinitions.find((item) => item.id === upgradeId);
+  if (!definition) return;
+  const level = state.upgrades[upgradeId] ?? 0;
+  if (level >= definition.maxLevel) return;
+  const cost = upgradeCost(definition, level);
+  if (!spendCoins(cost)) {
+    playSound("gateBad", { cooldown: 0.12 });
+    showToast("Need More Coins");
+    return;
+  }
+  state.upgrades[upgradeId] = level + 1;
+  if (upgradeId === "health") {
+    state.maxHealth += healthUpgradeBonus;
+    setHealth(state.health + healthUpgradeBonus);
+  }
+  playSound(upgradeId === "fireRate" ? "weapon" : "gateGood", { cooldown: 0.12 });
+  showToast(definition.name);
+  renderShop();
+}
+
 function setBossVisualState(visualState, duration = 0.16) {
   const bossType = currentBossType();
   if (!bossType || !boss.userData.sprite) return;
@@ -884,7 +1043,7 @@ function resetRun(nextLevel = false) {
   const carriedHealth = state.health;
   if (nextLevel) state.level += 1;
   state.runSeed = Math.floor(Math.random() * 4294967296) >>> 0;
-  state.speed = 12.8;
+  state.speed = baseRunSpeed * getSpeedMultiplier();
   state.playerX = 0;
   state.targetX = 0;
   state.playerZ = 0;
@@ -899,18 +1058,20 @@ function resetRun(nextLevel = false) {
   state.bossVisibleActive = false;
   state.failReason = "";
   state.invulnerableTimer = 0;
-  state.maxHealth = 100 + Math.min(40, Math.floor((state.level - 1) * 4));
+  state.maxHealth = baseMaxHealth + Math.min(levelHealthBonusCap, Math.floor((state.level - 1) * 4)) + getHealthUpgradeBonus();
   setHealth(nextLevel ? Math.min(carriedHealth, state.maxHealth) : state.maxHealth);
   setWeapon(0);
   state.toastTimer = 0;
   state.hitFlashTimer = 0;
   const levelData = generateLevel(state.level, { finishZ, seed: state.runSeed });
+  levelData.startAmmo += getAmmoUpgradeBonus();
   state.maxBossHp = levelData.bossHp;
   state.bossHp = state.maxBossHp;
   state.maxBossShieldHp = Math.round(state.maxBossHp * (levelData.bossType.shieldHp ?? 0));
   state.bossShieldHp = state.maxBossShieldHp;
   levelEl.textContent = state.level;
-  coinsEl.textContent = state.coins;
+  updateCoinDisplays();
+  renderShop();
   bossPanel.style.display = "none";
   bossFill.style.width = "100%";
   toastEl.textContent = "";
@@ -963,8 +1124,7 @@ function finishRun(won) {
   result.classList.remove("hidden");
   resultTitle.textContent = won ? "Victory" : state.failReason || "Out of Ammo";
   const reward = won ? Math.max(60, Math.floor(state.ammo * 0.35 + state.level * 38)) : Math.max(12, state.coins * 0.02 + state.level * 8);
-  state.coins += Math.floor(reward);
-  coinsEl.textContent = state.coins;
+  addCoins(Math.floor(reward));
   resultCopy.textContent = won
     ? `The boss dropped ${Math.floor(reward)} coins. Stronger enemies are moving in.`
     : state.failReason === "Enemy Breach"
@@ -972,6 +1132,7 @@ function finishRun(won) {
       : `Your squad ran dry. Better gates and cleaner shooting will carry the next run.`;
   restartButton.textContent = won ? "Next Run" : "Retry";
   restartButton.dataset.next = won ? "true" : "false";
+  renderShop();
 }
 
 function resolveGate(gate) {
@@ -998,8 +1159,7 @@ function collectCoin(coin) {
   coin.userData.hit = true;
   coin.visible = false;
   playSound("coin", { cooldown: 0.035 });
-  state.coins += 1;
-  coinsEl.textContent = state.coins;
+  addCoins(1);
 }
 
 function collectWeaponPickup(pickup) {
@@ -1251,7 +1411,7 @@ function shootAtTarget(dt) {
   }
   setAmmo(state.ammo - weapon.cost);
   spawnProjectile(target, weapon);
-  state.fireCooldown = weapon.cooldown;
+  state.fireCooldown = weapon.cooldown * getFireCooldownMultiplier();
 }
 
 function updateEnemyShooting(dt) {
@@ -1438,8 +1598,7 @@ function damageEnemy(enemy, amount) {
     projectileGroup.add(boom);
     projectiles.push(boom);
     enemy.visible = false;
-    state.coins += enemy.userData.reward;
-    coinsEl.textContent = state.coins;
+    addCoins(enemy.userData.reward);
   }
 }
 
@@ -1879,6 +2038,14 @@ function onKey(event) {
   if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") state.targetX += 0.8;
   state.targetX = THREE.MathUtils.clamp(state.targetX, -laneWidth / 2 + 0.55, laneWidth / 2 - 0.55);
 }
+
+shopGrid?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const button = event.target.closest("[data-upgrade-id]");
+  if (!button) return;
+  initAudio();
+  purchaseUpgrade(button.dataset.upgradeId);
+});
 
 startButton.addEventListener("click", startRun);
 restartButton.addEventListener("click", () => {
